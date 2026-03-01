@@ -55,10 +55,13 @@ COR24 is a simplified 24-bit RISC architecture designed for teaching:
 ### Development
 
 ```bash
-# Serve locally with hot reload
-trunk serve
+# Serve locally with hot reload (port 7401)
+./serve.sh
 
-# Open http://localhost:7777
+# Or directly:
+trunk serve --port 7401
+
+# Open http://localhost:7401/cor24-rs/
 ```
 
 ### Production Build
