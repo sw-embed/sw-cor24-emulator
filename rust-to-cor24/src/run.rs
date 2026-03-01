@@ -1,11 +1,14 @@
-//! cor24-run: Simple CLI runner for COR24 assembly with LED output
+//! cor24-run: COR24 assembler and emulator CLI
 //!
-//! Usage: cor24-run [--step] <file.s>
-//!        cor24-run --demo      # Run built-in LED blink demo
+//! Usage:
+//!   cor24-run --demo                           Run built-in LED demo
+//!   cor24-run --run <file.s>                   Assemble and run
+//!   cor24-run --assemble <in.s> <out.bin> <out.lst>  Assemble to binary + listing
 
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::Write;
 
 /// Memory-mapped I/O address for LEDs
 const IO_LEDSWDAT: u32 = 0xFF0000;
@@ -23,540 +26,564 @@ struct Cpu {
 
 impl Cpu {
     fn new() -> Self {
-        Self {
+        let mut cpu = Self {
             pc: 0,
             regs: [0; 8],
             c: false,
             mem: vec![0; 65536],
             halted: false,
             leds: 0,
-            prev_leds: 0,
-        }
+            prev_leds: 0xFF,
+        };
+        // Initialize stack pointer to top of RAM
+        cpu.regs[4] = 0xFE00; // sp = 0xFE00 (below I/O region)
+        cpu
     }
 
-    fn mask24(v: u32) -> u32 {
-        v & 0xFFFFFF
-    }
+    fn mask24(v: u32) -> u32 { v & 0xFFFFFF }
 
     fn sign_ext8(v: u8) -> u32 {
-        if v & 0x80 != 0 {
-            0xFFFF00 | (v as u32)
-        } else {
-            v as u32
-        }
+        if v & 0x80 != 0 { 0xFFFF00 | (v as u32) } else { v as u32 }
     }
 
     fn read_byte(&self, addr: u32) -> u8 {
         let addr = addr & 0xFFFFFF;
-        if (addr & 0xFF0000) == 0xFF0000 {
-            // I/O region - return 0 for switches (or could be configurable)
-            0
-        } else {
-            self.mem[(addr as usize) % self.mem.len()]
-        }
+        if (addr & 0xFF0000) == 0xFF0000 { 0 }
+        else { self.mem[(addr as usize) % self.mem.len()] }
     }
 
     fn write_byte(&mut self, addr: u32, val: u8) {
         let addr = addr & 0xFFFFFF;
+        // Debug: show writes to high memory
+        // if addr >= 0xFE0000 { eprintln!("  WRITE 0x{:06X} = 0x{:02X}", addr, val); }
         if addr == IO_LEDSWDAT {
             self.leds = val;
+            if self.leds != self.prev_leds {
+                print_leds(self.leds);
+                self.prev_leds = self.leds;
+            }
         } else if (addr & 0xFF0000) != 0xFF0000 {
             let len = self.mem.len();
             self.mem[(addr as usize) % len] = val;
         }
     }
 
-    fn read_word(&self, addr: u32) -> u32 {
-        let b0 = self.read_byte(addr) as u32;
-        let b1 = self.read_byte(addr.wrapping_add(1)) as u32;
-        let b2 = self.read_byte(addr.wrapping_add(2)) as u32;
-        b0 | (b1 << 8) | (b2 << 16)
-    }
-
-    fn write_word(&mut self, addr: u32, val: u32) {
-        self.write_byte(addr, (val & 0xFF) as u8);
-        self.write_byte(addr.wrapping_add(1), ((val >> 8) & 0xFF) as u8);
-        self.write_byte(addr.wrapping_add(2), ((val >> 16) & 0xFF) as u8);
-    }
-
     fn get_reg(&self, r: u8) -> u32 {
-        self.regs[(r & 7) as usize] & 0xFFFFFF
+        if r == 5 { 0 } else { self.regs[(r & 7) as usize] & 0xFFFFFF }
     }
 
     fn set_reg(&mut self, r: u8, v: u32) {
-        self.regs[(r & 7) as usize] = v & 0xFFFFFF;
+        if r != 5 { self.regs[(r & 7) as usize] = v & 0xFFFFFF; }
     }
 
-    /// Check if LEDs changed and print if so
-    fn check_led_change(&mut self) {
-        if self.leds != self.prev_leds {
-            print_leds(self.leds);
-            self.prev_leds = self.leds;
+    fn load_program(&mut self, data: &[u8]) {
+        for (i, &b) in data.iter().enumerate() {
+            if i < self.mem.len() { self.mem[i] = b; }
         }
     }
 
-    /// Execute one instruction, returns true if should continue
     fn step(&mut self) -> bool {
-        if self.halted {
-            return false;
-        }
+        if self.halted { return false; }
+        let b0 = self.read_byte(self.pc);
 
-        let byte0 = self.read_byte(self.pc);
-        // Debug: uncomment to trace execution
-        // eprintln!("PC={:04X} byte={:02X}", self.pc, byte0);
-
-        // Halt check: 0x00 at address 0 or explicit halt
-        if byte0 == 0x00 && self.pc == 0 {
-            self.halted = true;
-            return false;
-        }
-
-        // Simple decode based on opcode patterns
-        // This is a minimal subset for the demo
-        let (opcode, ra, rb) = decode_instruction(byte0);
-
-        match opcode {
-            0x09 => {
-                // add ra,imm8
-                let imm = self.read_byte(self.pc + 1);
-                let val = Self::mask24(self.get_reg(ra).wrapping_add(Self::sign_ext8(imm)));
-                self.set_reg(ra, val);
-                self.pc = Self::mask24(self.pc + 2);
+        match b0 {
+            // halt (la ir,0)
+            0xC7 => {
+                let addr = self.read_byte(self.pc+1) as u32
+                    | ((self.read_byte(self.pc+2) as u32) << 8)
+                    | ((self.read_byte(self.pc+3) as u32) << 16);
+                if addr == 0 { self.halted = true; return false; }
+                self.pc = addr;
             }
-            0x0B => {
-                // la ra,imm24
-                let b0 = self.read_byte(self.pc + 1) as u32;
-                let b1 = self.read_byte(self.pc + 2) as u32;
-                let b2 = self.read_byte(self.pc + 3) as u32;
-                let imm24 = b0 | (b1 << 8) | (b2 << 16);
-                if ra == 7 {
-                    // jmp absolute
-                    self.pc = imm24;
-                } else {
-                    self.set_reg(ra, imm24);
-                    self.pc = Self::mask24(self.pc + 4);
-                }
+            // la ra,imm24
+            0x29..=0x2F => {
+                let ra = b0 - 0x29;
+                let imm = self.read_byte(self.pc+1) as u32
+                    | ((self.read_byte(self.pc+2) as u32) << 8)
+                    | ((self.read_byte(self.pc+3) as u32) << 16);
+                self.set_reg(ra, imm);
+                self.pc = Self::mask24(self.pc + 4);
             }
-            0x0E => {
-                // lc ra,imm8
+            // lc ra,imm8
+            0x44..=0x47 => {
+                let ra = b0 - 0x44;
                 let imm = self.read_byte(self.pc + 1);
                 self.set_reg(ra, Self::sign_ext8(imm));
                 self.pc = Self::mask24(self.pc + 2);
             }
-            0x0F => {
-                // lcu ra,imm8
+            // lcu ra,imm8
+            0x48..=0x4B => {
+                let ra = b0 - 0x48;
                 let imm = self.read_byte(self.pc + 1);
                 self.set_reg(ra, imm as u32);
                 self.pc = Self::mask24(self.pc + 2);
             }
-            0x16 => {
-                // sb ra,imm8(rb)
+            // add ra,rb
+            0x00..=0x02 => {
+                let rb = b0;
+                let v = Self::mask24(self.get_reg(0).wrapping_add(self.get_reg(rb)));
+                self.set_reg(0, v);
+                self.pc = Self::mask24(self.pc + 1);
+            }
+            // add r0,imm
+            0x09 => {
+                let imm = self.read_byte(self.pc + 1);
+                let v = Self::mask24(self.get_reg(0).wrapping_add(Self::sign_ext8(imm)));
+                self.set_reg(0, v);
+                self.pc = Self::mask24(self.pc + 2);
+            }
+            // add sp,imm
+            0x21 => {
+                let imm = self.read_byte(self.pc + 1);
+                let v = Self::mask24(self.get_reg(4).wrapping_add(Self::sign_ext8(imm)));
+                self.set_reg(4, v);
+                self.pc = Self::mask24(self.pc + 2);
+            }
+            // mov ra,rb (0x30-0x42) and mov ra,c (0x34,0x3C,0x43)
+            0x30..=0x32 => { self.set_reg(0, self.get_reg(b0 - 0x30)); self.pc += 1; }
+            0x34 => { self.set_reg(0, if self.c {1} else {0}); self.pc += 1; }
+            0x38..=0x3A => { self.set_reg(1, self.get_reg(b0 - 0x38)); self.pc += 1; }
+            0x3C => { self.set_reg(1, if self.c {1} else {0}); self.pc += 1; }
+            0x40..=0x42 => { self.set_reg(2, self.get_reg(b0 - 0x40)); self.pc += 1; }
+            0x43 => { self.set_reg(2, if self.c {1} else {0}); self.pc += 1; }
+            // mov fp,sp
+            0x4C => { self.set_reg(3, self.get_reg(4)); self.pc += 1; }
+            // mov sp,fp
+            0x53 => { self.set_reg(4, self.get_reg(3)); self.pc += 1; }
+            // and r0,rb
+            0x03..=0x05 => {
+                let rb = b0 - 0x03;
+                self.set_reg(0, self.get_reg(0) & self.get_reg(rb));
+                self.pc += 1;
+            }
+            // sb ra,imm(rb) - store byte
+            // Encoding: 0x80 + ra*8 + rb
+            0x80..=0x89 => {
+                let idx = b0 - 0x80;
+                let ra = idx / 8;
+                let rb = idx % 8;
                 let imm = self.read_byte(self.pc + 1);
                 let addr = Self::mask24(self.get_reg(rb).wrapping_add(Self::sign_ext8(imm)));
                 self.write_byte(addr, self.get_reg(ra) as u8);
                 self.pc = Self::mask24(self.pc + 2);
             }
-            0x17 => {
-                // shl ra,rb
-                let shift = self.get_reg(rb) & 0x1F;
-                let val = Self::mask24(self.get_reg(ra) << shift);
-                self.set_reg(ra, val);
-                self.pc = Self::mask24(self.pc + 1);
+            // sw ra,imm(fp) - store word to stack frame
+            0x8A..=0x8C => {
+                let ra = b0 - 0x8A;
+                let imm = self.read_byte(self.pc + 1);
+                let addr = Self::mask24(self.get_reg(3).wrapping_add(Self::sign_ext8(imm)));
+                let v = self.get_reg(ra);
+                self.write_byte(addr, (v & 0xFF) as u8);
+                self.write_byte(addr + 1, ((v >> 8) & 0xFF) as u8);
+                self.write_byte(addr + 2, ((v >> 16) & 0xFF) as u8);
+                self.pc = Self::mask24(self.pc + 2);
             }
-            0x08 => {
-                // clu ra,rb
-                self.c = self.get_reg(ra) < self.get_reg(rb);
-                self.pc = Self::mask24(self.pc + 1);
+            // lw ra,imm(fp) - load word from stack frame
+            0x92..=0x94 => {
+                let ra = b0 - 0x92;
+                let imm = self.read_byte(self.pc + 1);
+                let addr = Self::mask24(self.get_reg(3).wrapping_add(Self::sign_ext8(imm)));
+                let b0 = self.read_byte(addr) as u32;
+                let b1 = self.read_byte(addr + 1) as u32;
+                let b2 = self.read_byte(addr + 2) as u32;
+                self.set_reg(ra, b0 | (b1 << 8) | (b2 << 16));
+                self.pc = Self::mask24(self.pc + 2);
             }
-            0x03 => {
-                // bra imm8
+            // ceq ra,z
+            0x15 => { self.c = self.get_reg(0) == 0; self.pc += 1; }
+            0x16 => { self.c = self.get_reg(0) == self.get_reg(1); self.pc += 1; }
+            // clu ra,rb
+            0x1E..=0x20 => {
+                let rb = b0 - 0x1E;
+                self.c = self.get_reg(0) < self.get_reg(rb);
+                self.pc += 1;
+            }
+            // bra
+            0x13 => {
                 let imm = self.read_byte(self.pc + 1);
                 let next = Self::mask24(self.pc + 2);
                 self.pc = Self::mask24(next.wrapping_add(Self::sign_ext8(imm)));
             }
-            0x04 => {
-                // brf imm8
+            // brf
+            0x14 => {
                 let imm = self.read_byte(self.pc + 1);
                 let next = Self::mask24(self.pc + 2);
-                if !self.c {
-                    self.pc = Self::mask24(next.wrapping_add(Self::sign_ext8(imm)));
-                } else {
-                    self.pc = next;
-                }
+                if !self.c { self.pc = Self::mask24(next.wrapping_add(Self::sign_ext8(imm))); }
+                else { self.pc = next; }
             }
-            0x05 => {
-                // brt imm8
+            // brt
+            0x12 => {
                 let imm = self.read_byte(self.pc + 1);
                 let next = Self::mask24(self.pc + 2);
-                if self.c {
-                    self.pc = Self::mask24(next.wrapping_add(Self::sign_ext8(imm)));
-                } else {
-                    self.pc = next;
-                }
+                if self.c { self.pc = Self::mask24(next.wrapping_add(Self::sign_ext8(imm))); }
+                else { self.pc = next; }
+            }
+            // push ra (0x64-0x6F)
+            0x64..=0x6F => {
+                let ra = (b0 - 0x64) / 2;
+                let sp = self.get_reg(4).wrapping_sub(3);
+                self.set_reg(4, sp);
+                let v = self.get_reg(ra);
+                self.write_byte(sp, (v & 0xFF) as u8);
+                self.write_byte(sp+1, ((v>>8) & 0xFF) as u8);
+                self.write_byte(sp+2, ((v>>16) & 0xFF) as u8);
+                self.pc += 1;
+            }
+            // pop ra (0x70-0x7B)
+            0x70..=0x7B => {
+                let ra = (b0 - 0x70) / 2;
+                let sp = self.get_reg(4);
+                let v = self.read_byte(sp) as u32
+                    | ((self.read_byte(sp+1) as u32) << 8)
+                    | ((self.read_byte(sp+2) as u32) << 16);
+                self.set_reg(ra, v);
+                self.set_reg(4, sp.wrapping_add(3));
+                self.pc += 1;
             }
             _ => {
-                // Unknown/halt
+                eprintln!("Unknown opcode 0x{:02X} at PC=0x{:04X}", b0, self.pc);
                 self.halted = true;
                 return false;
             }
         }
-
-        self.check_led_change();
         true
     }
-
-    fn load_program(&mut self, data: &[u8]) {
-        for (i, &b) in data.iter().enumerate() {
-            self.mem[i] = b;
-        }
-    }
 }
 
-/// Decode instruction byte to (opcode, ra, rb)
-fn decode_instruction(byte: u8) -> (u8, u8, u8) {
-    // Simplified decode for common patterns
-    match byte {
-        // add ra,imm (0x09, 0x0A, 0x0B for r0,r1,r2)
-        0x09 => (0x09, 0, 0),
-        0x0A => (0x09, 1, 0),
-        0x0B => (0x09, 2, 0),
-        // la ra,imm24 (0x29-0x2F)
-        0x29 => (0x0B, 0, 0),
-        0x2A => (0x0B, 1, 0),
-        0x2B => (0x0B, 2, 0),
-        0x2C => (0x0B, 3, 0),
-        0x2D => (0x0B, 4, 0),
-        0x2E => (0x0B, 5, 0),
-        0x2F => (0x0B, 6, 0),
-        0xC7 => (0x0B, 7, 0), // jmp addr
-        // lc ra,imm (0x44-0x4B)
-        0x44 => (0x0E, 0, 0),
-        0x45 => (0x0E, 1, 0),
-        0x46 => (0x0E, 2, 0),
-        0x47 => (0x0E, 3, 0),
-        // lcu ra,imm (0x48-0x4F)
-        0x48 => (0x0F, 0, 0),
-        0x49 => (0x0F, 1, 0),
-        0x4A => (0x0F, 2, 0),
-        0x4B => (0x0F, 3, 0),
-        // sb ra,imm(rb) - common patterns
-        0x82 => (0x16, 0, 1), // sb r0,(r1)
-        0x83 => (0x16, 0, 2),
-        0x84 => (0x16, 1, 0),
-        0x85 => (0x16, 1, 1),
-        0x86 => (0x16, 1, 2),
-        0x87 => (0x16, 2, 0),
-        // shl ra,rb
-        0x88 => (0x17, 0, 0),
-        0x89 => (0x17, 0, 1),
-        0x8A => (0x17, 0, 2),
-        0x8E => (0x17, 2, 0),
-        // clu ra,rb
-        0xCE => (0x08, 5, 0), // clu z,r0
-        0xCF => (0x08, 5, 1),
-        0xD0 => (0x08, 5, 2),
-        0x20 => (0x08, 0, 2), // clu r0,r2
-        0x21 => (0x08, 2, 0), // clu r2,r0
-        // branches
-        0x13 => (0x03, 0, 0), // bra
-        0x14 => (0x04, 0, 0), // brf
-        0x15 => (0x05, 0, 0), // brt
-        _ => (0xFF, 0, 0),    // unknown
-    }
-}
-
-/// Print LED state
 fn print_leds(leds: u8) {
     print!("LEDs: ");
     for i in (0..8).rev() {
-        if (leds >> i) & 1 == 1 {
-            print!("●");
-        } else {
-            print!("○");
-        }
+        if (leds >> i) & 1 == 1 { print!("\x1b[91m●\x1b[0m"); }
+        else { print!("○"); }
     }
     println!("  (0x{:02X})", leds);
 }
 
-/// Simple assembler for demo
-fn assemble(source: &str) -> Result<Vec<u8>, String> {
-    let mut output = Vec::new();
-    let mut labels: HashMap<String, u32> = HashMap::new();
-    let mut fixups: Vec<(usize, String, bool)> = Vec::new(); // (offset, label, is_branch)
+// =============================================================================
+// Assembler
+// =============================================================================
 
-    // First pass: collect labels
-    let mut addr = 0u32;
-    for line in source.lines() {
-        let line = line.split(';').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
+struct Assembler {
+    labels: HashMap<String, u32>,
+    output: Vec<u8>,
+    listing: Vec<String>,
+}
 
-        if let Some(label) = line.strip_suffix(':') {
-            labels.insert(label.trim().to_string(), addr);
-            continue;
-        }
-
-        // Estimate instruction size
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
-        }
-        let mnemonic = parts[0].to_lowercase();
-        addr += match mnemonic.as_str() {
-            "la" => 4,
-            "halt" => 4,
-            "add" | "lc" | "lcu" | "sb" | "lb" | "bra" | "brt" | "brf" => 2,
-            _ => 1,
-        };
+impl Assembler {
+    fn new() -> Self {
+        Self { labels: HashMap::new(), output: Vec::new(), listing: Vec::new() }
     }
 
-    // Second pass: generate code
-    for line in source.lines() {
-        let line = line.split(';').next().unwrap_or("").trim();
-        if line.is_empty() || line.ends_with(':') {
-            continue;
+    fn assemble(&mut self, source: &str) -> Result<(), String> {
+        // Pass 1: collect labels
+        let mut addr = 0u32;
+        for line in source.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.is_empty() { continue; }
+            if let Some(label) = line.strip_suffix(':') {
+                self.labels.insert(label.trim().to_string(), addr);
+                continue;
+            }
+            addr += self.estimate_size(line);
         }
 
+        // Pass 2: generate code
+        for line in source.lines() {
+            let orig = line;
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.is_empty() {
+                self.listing.push(format!("                    {}", orig));
+                continue;
+            }
+            if line.ends_with(':') {
+                self.listing.push(format!("{:04X}:               {}", self.output.len(), orig));
+                continue;
+            }
+            let start = self.output.len();
+            self.emit(line)?;
+            let bytes: Vec<String> = self.output[start..].iter().map(|b| format!("{:02X}", b)).collect();
+            self.listing.push(format!("{:04X}: {:14} {}", start, bytes.join(" "), orig));
+        }
+        Ok(())
+    }
+
+    fn estimate_size(&self, line: &str) -> u32 {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
+        if parts.is_empty() { return 0; }
+        match parts[0].to_lowercase().as_str() {
+            "la" | "halt" => 4,
+            "push" | "pop" | "mov" | "and" | "ceq" | "clu" | "cls" => 1,
+            _ => 2,
         }
+    }
 
+    fn emit(&mut self, line: &str) -> Result<(), String> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() { return Ok(()); }
         let mnemonic = parts[0].to_lowercase();
-        let operands = if parts.len() > 1 {
-            parts[1].split(',').map(|s| s.trim()).collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
+        let operand_str = if parts.len() > 1 { parts[1..].join(" ") } else { String::new() };
+        let operands: Vec<&str> = operand_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
         match mnemonic.as_str() {
+            "la" => {
+                let ra = self.reg(&operands[0])?;
+                let imm = self.imm24(&operands[1])?;
+                self.output.push(0x29 + ra);
+                self.output.push((imm & 0xFF) as u8);
+                self.output.push(((imm >> 8) & 0xFF) as u8);
+                self.output.push(((imm >> 16) & 0xFF) as u8);
+            }
             "lc" => {
-                let ra = parse_reg(&operands[0])?;
-                let imm = parse_imm(&operands[1])?;
-                output.push(0x44 + ra);
-                output.push(imm as u8);
+                let ra = self.reg(&operands[0])?;
+                let imm = self.imm8(&operands[1])?;
+                self.output.push(0x44 + ra);
+                self.output.push(imm as u8);
             }
             "lcu" => {
-                let ra = parse_reg(&operands[0])?;
-                let imm = parse_imm(&operands[1])?;
-                output.push(0x48 + ra);
-                output.push(imm as u8);
+                let ra = self.reg(&operands[0])?;
+                let imm = self.imm8(&operands[1])?;
+                self.output.push(0x48 + ra);
+                self.output.push(imm as u8);
             }
-            "la" => {
-                let ra = parse_reg(&operands[0])?;
-                let imm = parse_imm24(&operands[1], &labels)?;
-                output.push(0x29 + ra);
-                output.push((imm & 0xFF) as u8);
-                output.push(((imm >> 8) & 0xFF) as u8);
-                output.push(((imm >> 16) & 0xFF) as u8);
+            "add" => {
+                let ra = self.reg(&operands[0])?;
+                let op2 = operands[1].trim();
+                // Check if op2 is a register
+                let is_reg = op2.starts_with("r") || op2 == "sp" || op2 == "fp" || op2 == "z" || op2 == "iv" || op2 == "ir";
+                if is_reg && !op2.starts_with("-") && !op2.chars().next().unwrap_or('x').is_ascii_digit() {
+                    let rb = self.reg(op2)?;
+                    self.output.push(ra * 8 + rb);
+                } else if ra == 4 { // add sp,imm
+                    let imm = self.imm8(op2)?;
+                    self.output.push(0x21);
+                    self.output.push(imm as u8);
+                } else {
+                    let imm = self.imm8(op2)?;
+                    self.output.push(0x09 + ra * 8);
+                    self.output.push(imm as u8);
+                }
+            }
+            "mov" => {
+                let ra = self.reg(&operands[0])?;
+                let op2 = operands[1].trim();
+                if op2 == "c" {
+                    self.output.push(0x34 + ra * 8);
+                } else if op2 == "sp" && ra == 3 {
+                    self.output.push(0x4C);
+                } else if op2 == "fp" && ra == 4 {
+                    self.output.push(0x53);
+                } else {
+                    let rb = self.reg(op2)?;
+                    self.output.push(0x30 + ra * 8 + rb);
+                }
+            }
+            "and" => {
+                let ra = self.reg(&operands[0])?;
+                let rb = self.reg(&operands[1])?;
+                self.output.push(0x03 + ra * 8 + rb);
             }
             "sb" => {
-                let ra = parse_reg(&operands[0])?;
-                let (offset, rb) = parse_mem_operand(&operands[1])?;
-                // Simplified: sb r0,0(r1) -> 0x82 0x00
-                output.push(0x82 + ra * 3 + rb);
-                output.push(offset as u8);
+                // Store byte: sb ra, imm(rb)
+                // Encoding: 0x80 + ra*8 + rb
+                let ra = self.reg(&operands[0])?;
+                let (imm, rb) = self.mem(&operands[1])?;
+                self.output.push(0x80 + ra * 8 + rb);
+                self.output.push(imm as u8);
             }
-            "shl" => {
-                let ra = parse_reg(&operands[0])?;
-                let rb = parse_reg(&operands[1])?;
-                output.push(0x88 + ra * 3 + rb);
+            "sw" => {
+                // Store word (3 bytes) to memory
+                let ra = self.reg(&operands[0])?;
+                let (imm, rb) = self.mem(&operands[1])?;
+                if rb == 3 {
+                    // fp-based addressing (common for locals)
+                    self.output.push(0x8A + ra);
+                } else {
+                    // general encoding
+                    self.output.push(0x8D + ra * 8 + rb);
+                }
+                self.output.push(imm as u8);
+            }
+            "lw" => {
+                // Load word (3 bytes) from memory
+                let ra = self.reg(&operands[0])?;
+                let (imm, rb) = self.mem(&operands[1])?;
+                if rb == 3 {
+                    // fp-based addressing (common for locals)
+                    self.output.push(0x92 + ra);
+                } else {
+                    // general encoding
+                    self.output.push(0x95 + ra * 8 + rb);
+                }
+                self.output.push(imm as u8);
+            }
+            "ceq" => {
+                let ra = self.reg(&operands[0])?;
+                let rb = self.reg(&operands[1])?;
+                if rb == 5 { // ceq ra,z
+                    self.output.push(0x15 + ra);
+                } else {
+                    self.output.push(0x15 + ra + rb);
+                }
             }
             "clu" => {
-                let ra = parse_reg(&operands[0])?;
-                let rb = parse_reg(&operands[1])?;
-                if ra == 5 {
-                    // clu z,rx
-                    output.push(0xCE + rb);
-                } else {
-                    output.push(0x20 + ra); // simplified
-                }
+                let ra = self.reg(&operands[0])?;
+                let rb = self.reg(&operands[1])?;
+                self.output.push(0x1E + ra * 3 + rb);
             }
             "bra" => {
-                output.push(0x13);
-                let target = operands[0];
-                if let Some(&addr) = labels.get(target) {
-                    let current = output.len() as i32;
-                    let offset = (addr as i32) - current - 1;
-                    output.push(offset as u8);
-                } else {
-                    fixups.push((output.len(), target.to_string(), true));
-                    output.push(0);
-                }
+                self.output.push(0x13);
+                let off = self.branch(&operands[0])?;
+                self.output.push(off as u8);
             }
             "brf" => {
-                output.push(0x14);
-                let target = operands[0];
-                if let Some(&addr) = labels.get(target) {
-                    let current = output.len() as i32;
-                    let offset = (addr as i32) - current - 1;
-                    output.push(offset as u8);
-                } else {
-                    fixups.push((output.len(), target.to_string(), true));
-                    output.push(0);
-                }
+                self.output.push(0x14);
+                let off = self.branch(&operands[0])?;
+                self.output.push(off as u8);
             }
             "brt" => {
-                output.push(0x15);
-                let target = operands[0];
-                if let Some(&addr) = labels.get(target) {
-                    let current = output.len() as i32;
-                    let offset = (addr as i32) - current - 1;
-                    output.push(offset as u8);
-                } else {
-                    fixups.push((output.len(), target.to_string(), true));
-                    output.push(0);
-                }
+                self.output.push(0x12);
+                let off = self.branch(&operands[0])?;
+                self.output.push(off as u8);
+            }
+            "push" => {
+                let ra = self.reg(&operands[0])?;
+                // push encoding: 0x64 + ra*2
+                self.output.push(0x64 + ra * 2);
+            }
+            "pop" => {
+                let ra = self.reg(&operands[0])?;
+                // pop encoding: 0x70 + ra*2
+                self.output.push(0x70 + ra * 2);
             }
             "halt" => {
-                // la ir,0 (jmp to address 0)
-                output.push(0xC7);
-                output.push(0);
-                output.push(0);
-                output.push(0);
+                self.output.extend_from_slice(&[0xC7, 0, 0, 0]);
             }
-            _ => return Err(format!("Unknown instruction: {}", mnemonic)),
+            _ => return Err(format!("Unknown: {}", mnemonic)),
+        }
+        Ok(())
+    }
+
+    fn reg(&self, s: &str) -> Result<u8, String> {
+        let s = s.trim();
+        match s.to_lowercase().as_str() {
+            "r0" => Ok(0), "r1" => Ok(1), "r2" => Ok(2),
+            "r3"|"fp" => Ok(3), "r4"|"sp" => Ok(4), "r5"|"z" => Ok(5),
+            "r6"|"iv" => Ok(6), "r7"|"ir" => Ok(7),
+            _ => Err(format!("Bad reg: '{}'", s))
         }
     }
 
-    // Apply fixups
-    for (offset, label, is_branch) in fixups {
-        if let Some(&addr) = labels.get(&label) {
-            if is_branch {
-                let current = offset as i32;
-                let rel = (addr as i32) - current - 1;
-                output[offset] = rel as u8;
-            }
-        } else {
-            return Err(format!("Undefined label: {}", label));
-        }
+    fn imm8(&self, s: &str) -> Result<i32, String> {
+        let s = s.trim();
+        if let Some(h) = s.strip_prefix("0x") { i32::from_str_radix(h, 16).map_err(|e| e.to_string()) }
+        else { s.parse().map_err(|e: std::num::ParseIntError| e.to_string()) }
     }
 
-    Ok(output)
-}
+    fn imm24(&self, s: &str) -> Result<u32, String> {
+        let s = s.trim();
+        if let Some(h) = s.strip_prefix("0x") { u32::from_str_radix(h, 16).map_err(|e| e.to_string()) }
+        else { s.parse::<i64>().map(|v| (v as u32) & 0xFFFFFF).map_err(|e| e.to_string()) }
+    }
 
-fn parse_reg(s: &str) -> Result<u8, String> {
-    match s.to_lowercase().as_str() {
-        "r0" => Ok(0),
-        "r1" => Ok(1),
-        "r2" => Ok(2),
-        "r3" | "fp" => Ok(3),
-        "r4" | "sp" => Ok(4),
-        "r5" | "z" => Ok(5),
-        "r6" | "iv" => Ok(6),
-        "r7" | "ir" => Ok(7),
-        _ => Err(format!("Invalid register: {}", s)),
+    fn mem(&self, s: &str) -> Result<(i32, u8), String> {
+        if let Some(p) = s.find('(') {
+            let off = if p == 0 { 0 } else { self.imm8(&s[..p])? };
+            let reg = s[p+1..].trim_end_matches(')');
+            Ok((off, self.reg(reg)?))
+        } else { Err(format!("Bad mem: {}", s)) }
+    }
+
+    fn branch(&mut self, target: &str) -> Result<i32, String> {
+        let cur = self.output.len() as i32 + 1;
+        if let Some(&addr) = self.labels.get(target.trim()) {
+            Ok((addr as i32) - cur)
+        } else { Err(format!("Undefined: {}", target)) }
     }
 }
 
-fn parse_imm(s: &str) -> Result<i32, String> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        i32::from_str_radix(hex, 16).map_err(|e| e.to_string())
-    } else if s.starts_with('-') {
-        s.parse().map_err(|e: std::num::ParseIntError| e.to_string())
-    } else {
-        s.parse().map_err(|e: std::num::ParseIntError| e.to_string())
-    }
-}
-
-fn parse_imm24(s: &str, _labels: &HashMap<String, u32>) -> Result<u32, String> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u32::from_str_radix(hex, 16).map_err(|e| e.to_string())
-    } else {
-        s.parse().map_err(|e: std::num::ParseIntError| e.to_string())
-    }
-}
-
-fn parse_mem_operand(s: &str) -> Result<(i32, u8), String> {
-    // Parse "offset(reg)" or "(reg)"
-    if let Some(paren) = s.find('(') {
-        let offset_str = &s[..paren];
-        let reg_str = s[paren + 1..].trim_end_matches(')');
-        let offset = if offset_str.is_empty() {
-            0
-        } else {
-            parse_imm(offset_str)?
-        };
-        let rb = parse_reg(reg_str)?;
-        Ok((offset, rb))
-    } else {
-        Err(format!("Invalid memory operand: {}", s))
-    }
-}
-
-// Pre-assembled LED counter program
-// Simplest demo: count 0,1,2,3... and display on LEDs
-// Uses only: la, lc, sb, add imm, bra
-const DEMO_BYTES: &[u8] = &[
-    // 0x00: la r1,0xFF0000    (4 bytes) - LED address
-    0x2A, 0x00, 0x00, 0xFF,
-    // 0x04: lc r0,0           (2 bytes) - counter = 0
-    0x44, 0x00,
-    // 0x06: loop: sb r0,0(r1) (2 bytes) - write to LEDs
-    0x82, 0x00,
-    // 0x08: add r0,1          (2 bytes) - counter++
-    0x09, 0x01,
-    // 0x0A: bra loop          (2 bytes) - back to loop
-    // next_pc = 0x0C, target = 0x06, offset = 0x06 - 0x0C = -6 = 0xFA
-    0x13, 0xFA,
-];
+// =============================================================================
+// Main
+// =============================================================================
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let use_demo = args.len() < 2 || args[1] == "--demo";
-    let step_mode = args.contains(&"--step".to_string());
-
-    let bytes: Vec<u8> = if use_demo {
-        println!("=== COR24 LED Counter Demo ===\n");
-        println!("Program:");
-        println!("        la   r1, 0xFF0000  ; LED I/O address");
-        println!("        lc   r0, 0         ; counter = 0");
-        println!("loop:");
-        println!("        sb   r0, 0(r1)     ; Write to LEDs");
-        println!("        add  r0, 1         ; counter++");
-        println!("        bra  loop          ; repeat forever\n");
-        DEMO_BYTES.to_vec()
-    } else {
-        let filename = if step_mode && args.len() > 2 {
-            &args[2]
-        } else {
-            &args[1]
-        };
-        let source = fs::read_to_string(filename).expect("Failed to read file");
-        match assemble(&source) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("Assembly error: {}", e);
-                std::process::exit(1);
-            }
-        }
-    };
-
-    println!("Loaded {} bytes\n", bytes.len());
-
-    // Run
-    let mut cpu = Cpu::new();
-    cpu.load_program(&bytes);
-
-    println!("Running...\n");
-    print_leds(0); // Initial state
-
-    let max_steps = 100;
-    let mut steps = 0;
-
-    while cpu.step() && steps < max_steps {
-        steps += 1;
-        if step_mode {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
+    if args.len() < 2 {
+        println!("cor24-run: COR24 assembler and emulator\n");
+        println!("Usage:");
+        println!("  cor24-run --demo                  Run built-in LED demo");
+        println!("  cor24-run --run <file.s>          Assemble and run");
+        println!("  cor24-run --assemble <in.s> <out.bin> <out.lst>");
+        println!("                                    Assemble to files");
+        return;
     }
 
-    println!("\nCompleted {} steps", steps);
-    if cpu.halted {
-        println!("CPU halted");
+    match args[1].as_str() {
+        "--demo" => {
+            println!("=== COR24 LED Demo ===\n");
+            println!("Program: count 0..15, display on LEDs\n");
+            // Pre-assembled demo
+            let demo: &[u8] = &[
+                0x2A, 0x00, 0x00, 0xFF, // la r1, 0xFF0000
+                0x44, 0x00,             // lc r0, 0
+                0x82, 0x00,             // sb r0, 0(r1)
+                0x09, 0x01,             // add r0, 1
+                0x46, 0x10,             // lc r2, 16
+                0x1F,                   // clu r0, r2
+                0x12, 0xF6,             // brt loop (-10)
+                0xC7, 0x00, 0x00, 0x00, // halt
+            ];
+            let mut cpu = Cpu::new();
+            cpu.load_program(demo);
+            let mut steps = 0;
+            while cpu.step() && steps < 1000 { steps += 1; }
+            println!("\nExecuted {} steps", steps);
+        }
+
+        "--run" => {
+            if args.len() < 3 {
+                eprintln!("Usage: cor24-run --run <file.s>");
+                return;
+            }
+            let source = fs::read_to_string(&args[2]).expect("Cannot read file");
+            let mut asm = Assembler::new();
+            if let Err(e) = asm.assemble(&source) {
+                eprintln!("Assembly error: {}", e);
+                return;
+            }
+            println!("Assembled {} bytes\n", asm.output.len());
+            println!("Listing:");
+            for line in &asm.listing { println!("{}", line); }
+            println!("\nRunning...\n");
+            let mut cpu = Cpu::new();
+            cpu.load_program(&asm.output);
+            let mut steps = 0;
+            while cpu.step() && steps < 10000 { steps += 1; }
+            println!("\nExecuted {} steps", steps);
+        }
+
+        "--assemble" => {
+            if args.len() < 5 {
+                eprintln!("Usage: cor24-run --assemble <in.s> <out.bin> <out.lst>");
+                return;
+            }
+            let source = fs::read_to_string(&args[2]).expect("Cannot read file");
+            let mut asm = Assembler::new();
+            if let Err(e) = asm.assemble(&source) {
+                eprintln!("Assembly error: {}", e);
+                return;
+            }
+            fs::write(&args[3], &asm.output).expect("Cannot write .bin");
+            let mut lst_file = fs::File::create(&args[4]).expect("Cannot write .lst");
+            for line in &asm.listing {
+                writeln!(lst_file, "{}", line).ok();
+            }
+            println!("Wrote {} bytes to {}", asm.output.len(), args[3]);
+            println!("Wrote listing to {}", args[4]);
+        }
+
+        _ => {
+            eprintln!("Unknown option: {}", args[1]);
+        }
     }
 }

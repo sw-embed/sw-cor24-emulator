@@ -196,6 +196,7 @@ fn translate_function(
     func_type: Option<&FuncType>,
     body: wasmparser::FunctionBody,
 ) -> Result<String> {
+    let debug = std::env::var("WASM_DEBUG").is_ok();
     let mut output = String::new();
 
     // Function header
@@ -230,57 +231,54 @@ fn translate_function(
         num_locals += count;
     }
 
-    // Prologue if we have locals beyond params
-    if num_locals > 0 {
-        output.push_str("        push    fp\n");
-        output.push_str("        mov     fp, sp\n");
+    // Get parameter count from function type
+    let num_params = func_type.map(|ft| ft.params().len() as u32).unwrap_or(0);
+    let total_locals = num_params + num_locals;
+
+    // Always use prologue for stack-based locals (simpler, avoids register conflicts)
+    output.push_str("        push    fp\n");
+    output.push_str("        mov     fp, sp\n");
+    if total_locals > 0 {
         output.push_str(&format!(
             "        add     sp, -{}\n",
-            num_locals * 3
+            total_locals * 3
         )); // 3 bytes per local
+        // Initialize locals to 0 (params would be passed in registers, copy to stack)
+        for i in 0..num_params {
+            // Copy parameters from r0, r1, ... to stack frame
+            let offset = i * 3;
+            output.push_str(&format!("        sw      r{}, {}(fp)\n", i, offset));
+        }
     }
 
     // Track virtual stack (WASM is stack-based)
     let mut stack_depth: i32 = 0;
     let mut code = Vec::new();
 
+    // Track labels for control flow
+    let mut label_counter = 0;
+    let mut block_stack: Vec<(String, String)> = Vec::new(); // (start_label, end_label)
+
     // Parse operators
     let ops_reader = body.get_operators_reader()?;
     for op in ops_reader {
         let op = op?;
+        if debug {
+            eprintln!("[WASM] stack={} op={:?}", stack_depth, op);
+        }
         match op {
             Operator::LocalGet { local_index } => {
-                // Parameters: local 0 = r0, local 1 = r1 (for first 2)
-                if local_index < 2 {
-                    if stack_depth as u32 == local_index {
-                        // Already in the right register
-                        code.push(format!("        ; local.get {} (already in r{})\n", local_index, local_index));
-                    } else {
-                        code.push(format!(
-                            "        mov     r{}, r{}\n",
-                            stack_depth, local_index
-                        ));
-                    }
-                } else {
-                    let offset = (local_index as i32 - 2) * 3;
-                    code.push(format!("        lw      r{}, {}(fp)\n", stack_depth, offset));
-                }
+                // All locals are on the stack frame - load to expression register
+                let offset = local_index * 3;
+                code.push(format!("        lw      r{}, {}(fp)\n", stack_depth, offset));
                 stack_depth += 1;
             }
 
             Operator::LocalSet { local_index } => {
+                // All locals are on the stack frame - store from expression register
                 stack_depth -= 1;
-                if local_index < 2 {
-                    if stack_depth > 0 || local_index as i32 != stack_depth {
-                        code.push(format!(
-                            "        mov     r{}, r{}\n",
-                            local_index, stack_depth
-                        ));
-                    }
-                } else {
-                    let offset = (local_index as i32 - 2) * 3;
-                    code.push(format!("        sw      r{}, {}(fp)\n", stack_depth, offset));
-                }
+                let offset = local_index * 3;
+                code.push(format!("        sw      r{}, {}(fp)\n", stack_depth, offset));
             }
 
             Operator::I32Const { value } => {
@@ -368,8 +366,133 @@ fn translate_function(
                 ));
             }
 
+            Operator::I32Store8 { memarg } => {
+                // Store byte: mem[addr + offset] = value
+                // Stack: [addr, value] -> []
+                stack_depth -= 2;
+                let addr_reg = stack_depth;
+                let val_reg = stack_depth + 1;
+                if memarg.offset > 0 {
+                    code.push(format!(
+                        "        la      r{}, 0x{:06X}\n",
+                        val_reg + 1,
+                        memarg.offset as u32 & 0xFFFFFF
+                    ));
+                    code.push(format!("        add     r{}, r{}\n", addr_reg, val_reg + 1));
+                }
+                code.push(format!("        sb      r{}, 0(r{})\n", val_reg, addr_reg));
+            }
+
+            Operator::I32Load8U { memarg } => {
+                // Load unsigned byte: value = mem[addr + offset]
+                // Stack: [addr] -> [value]
+                let addr_reg = stack_depth - 1;
+                if memarg.offset > 0 {
+                    code.push(format!(
+                        "        la      r{}, 0x{:06X}\n",
+                        addr_reg + 1,
+                        memarg.offset as u32 & 0xFFFFFF
+                    ));
+                    code.push(format!("        add     r{}, r{}\n", addr_reg, addr_reg + 1));
+                }
+                code.push(format!("        lbu     r{}, 0(r{})\n", addr_reg, addr_reg));
+            }
+
+            Operator::Loop { .. } => {
+                let start_label = format!(".L{}", label_counter);
+                let end_label = format!(".L{}", label_counter + 1);
+                label_counter += 2;
+                block_stack.push((start_label.clone(), end_label.clone()));
+                code.push(format!("{}:\n", start_label));
+            }
+
+            Operator::Block { .. } => {
+                let start_label = format!(".L{}", label_counter);
+                let end_label = format!(".L{}", label_counter + 1);
+                label_counter += 2;
+                block_stack.push((start_label, end_label.clone()));
+            }
+
+            Operator::Br { relative_depth } => {
+                // Branch to enclosing block
+                if let Some((start, _end)) = block_stack.iter().rev().nth(relative_depth as usize) {
+                    code.push(format!("        bra     {}\n", start));
+                }
+            }
+
+            Operator::BrIf { relative_depth } => {
+                // Conditional branch: if top of stack != 0, branch
+                stack_depth -= 1;
+                if let Some((start, _end)) = block_stack.iter().rev().nth(relative_depth as usize) {
+                    code.push(format!("        ceq     r{}, z\n", stack_depth));
+                    code.push(format!("        brf     {}\n", start)); // branch if NOT equal to zero
+                }
+            }
+
+            Operator::I32LtU => {
+                // Unsigned less than: C = (a < b)
+                stack_depth -= 1;
+                code.push(format!(
+                    "        clu     r{}, r{}\n",
+                    stack_depth - 1,
+                    stack_depth
+                ));
+                // Result is in C flag, but WASM expects i32 on stack
+                code.push(format!("        mov     r{}, c\n", stack_depth - 1));
+            }
+
+            Operator::I32LtS => {
+                // Signed less than
+                stack_depth -= 1;
+                code.push(format!(
+                    "        cls     r{}, r{}\n",
+                    stack_depth - 1,
+                    stack_depth
+                ));
+                code.push(format!("        mov     r{}, c\n", stack_depth - 1));
+            }
+
+            Operator::I32Eqz => {
+                // Test if zero: result = (value == 0) ? 1 : 0
+                code.push(format!("        ceq     r{}, z\n", stack_depth - 1));
+                code.push(format!("        mov     r{}, c\n", stack_depth - 1));
+            }
+
+            Operator::I32Eq => {
+                // Equality test
+                stack_depth -= 1;
+                code.push(format!(
+                    "        ceq     r{}, r{}\n",
+                    stack_depth - 1,
+                    stack_depth
+                ));
+                code.push(format!("        mov     r{}, c\n", stack_depth - 1));
+            }
+
             Operator::End => {
-                // End of function
+                // End of block or function
+                if let Some((_start, end)) = block_stack.pop() {
+                    code.push(format!("{}:\n", end));
+                }
+            }
+
+            Operator::Return => {
+                // Early return
+                code.push("        mov     sp, fp\n".to_string());
+                code.push("        pop     fp\n".to_string());
+                code.push("        jmp     (r1)\n".to_string());
+            }
+
+            Operator::Drop => {
+                // Discard top of stack
+                stack_depth -= 1;
+            }
+
+            Operator::LocalTee { local_index } => {
+                // Set local but keep value on stack
+                let src_reg = stack_depth - 1;
+                let offset = local_index * 3;
+                code.push(format!("        sw      r{}, {}(fp)\n", src_reg, offset));
             }
 
             other => {
@@ -383,11 +506,9 @@ fn translate_function(
         output.push_str(&line);
     }
 
-    // Epilogue
-    if num_locals > 0 {
-        output.push_str("        mov     sp, fp\n");
-        output.push_str("        pop     fp\n");
-    }
+    // Epilogue (always, since we always have prologue)
+    output.push_str("        mov     sp, fp\n");
+    output.push_str("        pop     fp\n");
 
     // Return - result is in r0
     output.push_str("        halt                ; return (use jmp (r1) for real calls)\n");
