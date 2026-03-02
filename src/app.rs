@@ -218,6 +218,7 @@ pub fn app() -> Html {
                 }
 
                 // Sync switch state from UI (user may have toggled switches)
+                // IMPORTANT: Read this BEFORE executing so we see user's toggles
                 let ui_switches = (*cpu_handle).get_switches();
                 current_cpu.set_switches(ui_switches);
 
@@ -237,6 +238,10 @@ pub fn app() -> Html {
                 }
 
                 // Update CPU state for UI refresh (includes LED state)
+                // IMPORTANT: Preserve UI switch state - don't overwrite user's toggles
+                // Re-read in case user toggled during execution
+                let final_switches = (*cpu_handle).get_switches();
+                current_cpu.set_switches(final_switches);
                 cpu_handle.set(current_cpu.clone());
 
                 if halted {
