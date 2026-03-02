@@ -217,6 +217,10 @@ pub fn app() -> Html {
                     return;
                 }
 
+                // Sync switch state from UI (user may have toggled switches)
+                let ui_switches = (*cpu_handle).get_switches();
+                current_cpu.set_switches(ui_switches);
+
                 // Execute a small batch of instructions (small batch = responsive to input)
                 let mut halted = false;
                 let mut error_msg = None;
@@ -232,7 +236,7 @@ pub fn app() -> Html {
                     }
                 }
 
-                // Update CPU state for UI refresh
+                // Update CPU state for UI refresh (includes LED state)
                 cpu_handle.set(current_cpu.clone());
 
                 if halted {
