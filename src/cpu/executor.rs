@@ -115,15 +115,19 @@ impl Executor {
 
             Opcode::Bra => {
                 // bra dd (always branch)
+                // Hardware pipeline: PC is 2 ahead of next instruction at execute time
+                // So branch base = instruction_addr + 4 = next_pc + 2
                 let offset = CpuState::sign_extend_8(imm8);
-                cpu.pc = CpuState::mask_24(next_pc.wrapping_add(offset));
+                let branch_base = next_pc.wrapping_add(2);
+                cpu.pc = CpuState::mask_24(branch_base.wrapping_add(offset));
             }
 
             Opcode::Brf => {
                 // brf dd (branch if false)
                 if !cpu.c {
                     let offset = CpuState::sign_extend_8(imm8);
-                    cpu.pc = CpuState::mask_24(next_pc.wrapping_add(offset));
+                    let branch_base = next_pc.wrapping_add(2);
+                    cpu.pc = CpuState::mask_24(branch_base.wrapping_add(offset));
                 } else {
                     cpu.pc = next_pc;
                 }
@@ -133,7 +137,8 @@ impl Executor {
                 // brt dd (branch if true)
                 if cpu.c {
                     let offset = CpuState::sign_extend_8(imm8);
-                    cpu.pc = CpuState::mask_24(next_pc.wrapping_add(offset));
+                    let branch_base = next_pc.wrapping_add(2);
+                    cpu.pc = CpuState::mask_24(branch_base.wrapping_add(offset));
                 } else {
                     cpu.pc = next_pc;
                 }
@@ -621,8 +626,8 @@ mod tests {
 
         executor.step(&mut cpu);
 
-        // PC starts at 0, instruction size is 2, then offset +10 = 12
-        assert_eq!(cpu.pc, 12);
+        // PC starts at 0, branch_base = 0+2+2 = 4, then offset +10 = 14
+        assert_eq!(cpu.pc, 14);
     }
 
     #[test]
@@ -637,8 +642,8 @@ mod tests {
 
         executor.step(&mut cpu);
 
-        // PC was 100, instruction size is 2, next_pc = 102, then offset -10 = 92
-        assert_eq!(cpu.pc, 92);
+        // PC was 100, branch_base = 100+2+2 = 104, then offset -10 = 94
+        assert_eq!(cpu.pc, 94);
     }
 
     // ========== Brf (opcode 0x04) ==========
@@ -655,8 +660,8 @@ mod tests {
 
         executor.step(&mut cpu);
 
-        // PC = 0, next_pc = 2, offset +20 = 22
-        assert_eq!(cpu.pc, 22);
+        // PC = 0, branch_base = 0+2+2 = 4, offset +20 = 24
+        assert_eq!(cpu.pc, 24);
     }
 
     #[test]
@@ -688,7 +693,7 @@ mod tests {
 
         executor.step(&mut cpu);
 
-        assert_eq!(cpu.pc, 32); // 0 + 2 + 30
+        assert_eq!(cpu.pc, 34); // 0 + 2 + 2 + 30
     }
 
     #[test]
@@ -1997,7 +2002,7 @@ mod tests {
         assert_eq!(cpu.pc, 1);
 
         executor.step(&mut cpu); // brt
-        assert_eq!(cpu.pc, 13); // 1 + 2 + 10 = 13
+        assert_eq!(cpu.pc, 15); // 1 + 2 + 2 + 10 = 15
     }
 
     #[test]
@@ -2039,5 +2044,30 @@ mod tests {
         executor.step(&mut cpu);
 
         assert_eq!(cpu.io.leds, 0x55, "LED value should be 0x55");
+    }
+
+    // ========== Sieve Integration Test ==========
+
+    #[test]
+    fn test_sieve_lgo_produces_correct_output() {
+        let lgo = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/docs/research/asld24/sieve.lgo"),
+        )
+        .expect("sieve.lgo must exist");
+
+        let mut cpu = CpuState::new();
+        crate::loader::load_lgo(&lgo, &mut cpu).unwrap();
+
+        // Entry point is _main at 0x93 (no G line in sieve.lgo)
+        cpu.pc = 0x93;
+
+        let executor = Executor::new();
+        executor.run(&mut cpu, 500_000_000);
+
+        assert_eq!(
+            cpu.io.uart_output,
+            "1000 iterations\n1899 primes.\n",
+            "Sieve should output correct prime count"
+        );
     }
 }

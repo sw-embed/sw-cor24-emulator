@@ -3,3 +3,15 @@ target/
 *.swp
 *.swo
 .DS_Store
+
+# Compiled objects and binaries from as24 toolchain
+*.o
+*.zip
+docs/research/asld24/as24
+docs/research/asld24/cor24-as
+docs/research/asld24/cor24-ld
+docs/research/asld24/ld24
+docs/research/asld24/longlgo
+
+# Binary spreadsheets
+*.xlsx

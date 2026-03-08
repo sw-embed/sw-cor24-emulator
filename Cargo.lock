@@ -64,6 +64,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cor24-cli"
+version = "0.1.0"
+dependencies = [
+ "cor24-emulator",
+]
+
+[[package]]
 name = "cor24-emulator"
 version = "0.1.0"
 dependencies = [

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "components"]
+members = [".", "components", "cli"]
 resolver = "2"
 
 [package]

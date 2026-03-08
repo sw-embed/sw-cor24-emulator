@@ -1,0 +1,12 @@
+[package]
+name = "cor24-cli"
+version = "0.1.0"
+edition = "2024"
+description = "COR24 CLI debugger and runner"
+
+[[bin]]
+name = "cor24-dbg"
+path = "src/main.rs"
+
+[dependencies]
+cor24-emulator = { path = ".." }
