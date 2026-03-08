@@ -50,7 +50,7 @@ pub fn get_challenges() -> Vec<Challenge> {
             name: "Max of Two".to_string(),
             description: "Set r0 to the maximum of r0=7 and r1=12 (without branching). Use mov ra,c!"
                 .to_string(),
-            initial_code: "; Find max of r0=7 and r1=12, store result in r0\n; Hint: Use COR24's mov ra,c feature\n; Result: r0 = 12\n\n        lc      r0,7\n        lc      r1,12\n\n        ; Your code here\n\n        halt\n"
+            initial_code: "; Find max of r0=7 and r1=12, store result in r0\n; Hint: Use COR24's mov ra,c feature\n; Result: r0 = 12\n\n        lc      r0,7\n        lc      r1,12\n\n        ; Your code here\n\nhalt:   bra     halt\n"
                 .to_string(),
             hint: "cls sets C if r0 < r1. If true, you want r1. Use sub/add with C flag.".to_string(),
             validator: |cpu| cpu.get_reg(0) == 12,
@@ -84,7 +84,7 @@ pub fn get_examples() -> Vec<(String, String, String)> {
         lc      r2,5        ; r2 = 5
         add     r0,r2       ; r0 = 35
 
-        halt                ; Stop execution
+halt:   bra     halt        ; Stop execution
 "#
             .to_string(),
         ),
@@ -105,7 +105,7 @@ pub fn get_examples() -> Vec<(String, String, String)> {
 
 less:   lc      r2,1        ; r2 = 1 (5 < 10)
 
-done:   halt
+done:   bra     done
 "#
             .to_string(),
         ),
@@ -130,7 +130,7 @@ done:   halt
         pop     r2          ; Restore r2
         pop     fp          ; Restore fp
 
-        halt                ; (would be jmp (r1))
+halt:   bra     halt        ; (would be jmp (r1))
 "#
             .to_string(),
         ),
@@ -148,7 +148,7 @@ loop:   add     r0,1        ; counter++
         brt     loop        ; Continue if less
 
         ; r0 = 5 when done
-        halt
+halt:   bra     halt
 "#
             .to_string(),
         ),
@@ -168,7 +168,7 @@ loop:   add     r0,1        ; counter++
         lb      r2,0(r1)    ; r2 = mem[0x1000]
 
         ; r2 should be 100
-        halt
+halt:   bra     halt
 "#
             .to_string(),
         ),
@@ -189,7 +189,7 @@ loop:   add     r0,1        ; counter++
         cls     r0,r1       ; C = (20 < 10) = 0
         mov     r0,c        ; r0 = C = 0
 
-        halt
+halt:   bra     halt
 "#
             .to_string(),
         ),
@@ -213,7 +213,7 @@ loop:   add     r0,1        ; counter++
         lb      r1,0(r0)    ; r1 = 0xFFFF80 (sign extended)
         lbu     r2,0(r0)    ; r2 = 0x000080 (zero extended)
 
-        halt
+halt:   bra     halt
 "#
             .to_string(),
         ),
@@ -237,7 +237,7 @@ loop:   add     r0,1        ; counter++
         lc      r1,16
         mul     r0,r1       ; r0 = 4096 (0x1000)
 
-        halt
+halt:   bra     halt
 "#
             .to_string(),
         ),
@@ -271,7 +271,7 @@ loop:
         lc      r0,1
         bra     loop
 
-        halt                ; Never reached
+halt:   bra     halt        ; Never reached
 "#
             .to_string(),
         ),
@@ -293,7 +293,7 @@ loop:
 
         bra     loop        ; Keep polling
 
-        halt                ; Never reached
+halt:   bra     halt        ; Never reached
 "#
             .to_string(),
         ),

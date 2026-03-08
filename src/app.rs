@@ -1177,7 +1177,7 @@ const EXAMPLE_PROGRAM: &str = "; COR24 Example: Basic Arithmetic
         lc      r2,5        ; r2 = 5
         add     r0,r2       ; r0 = 35
 
-        halt                ; Stop execution";
+halt:   bra     halt        ; Done — infinite loop";
 
 const TUTORIAL_CONTENT: &str = r#"
 <h3>Welcome to the COR24 Assembly Emulator!</h3>
@@ -1213,7 +1213,7 @@ const TUTORIAL_CONTENT: &str = r#"
     <li><code>brf dd</code> - Branch if C=false</li>
     <li><code>push ra</code> - Push to stack</li>
     <li><code>pop ra</code> - Pop from stack</li>
-    <li><code>halt</code> - Stop execution</li>
+    <li><code>halt: bra halt</code> - Stop (branch-to-self loop)</li>
 </ul>
 "#;
 
@@ -1270,7 +1270,7 @@ const ISA_REF_CONTENT: &str = r#"
 <p><strong>jal ra,(rb)</strong> - Jump and link (call)</p>
 
 <h4>Special</h4>
-<p><strong>halt</strong> - Stop execution (la ir,addr form)</p>
+<p><strong>halt: bra halt</strong> - Stop execution (branch-to-self infinite loop)</p>
 <p><strong>mov ra,rb</strong> - Copy register</p>
 <p><strong>mov ra,c</strong> - Move condition flag to register</p>
 "#;
@@ -1489,11 +1489,11 @@ add_and_store:
         ; Cleanup
         mov     sp, fp
         pop     fp
-        halt"#.to_string(),
+halt:   bra     halt        ; Done"#.to_string(),
             machine_code_hex: "6a4c 440a 4519 01 2b50 0000 8a00 9300\n\
                               2b53 0000 8b00 9200 2b56 0000 8a00 53 76\n\
-                              c700 0000".to_string(),
-            machine_code_size: 38,
+                              13fc".to_string(),
+            machine_code_size: 36,
             listing: r#"0000: 6A           push    fp
 0001: 4C           mov     fp, sp
 0002: 44 0A        lc      r0, 10
@@ -1509,7 +1509,7 @@ add_and_store:
 001B: 8A 00        sw      r0, 0(r2)
 001D: 53           mov     sp, fp
 001E: 76           pop     fp
-001F: C7 00 00 00  halt"#.to_string(),
+001F: 13 FC        bra     halt"#.to_string(),
         },
         RustExample {
             name: "Button Echo (blinky)".to_string(),
@@ -1551,14 +1551,14 @@ button_echo:
         sb      r0, 0(r1)       ; Write to LED D2 (bit 0)
         bra     .loop           ; Keep polling
 
-        halt                    ; Never reached"#.to_string(),
-            machine_code_hex: "2900 00ff 2e00 8200 13f8 c700 0000".to_string(),
-            machine_code_size: 14,
+halt:   bra     halt            ; Never reached"#.to_string(),
+            machine_code_hex: "2900 00ff 2e00 8200 13f8 13fc".to_string(),
+            machine_code_size: 12,
             listing: r#"0000: 29 00 00 FF  la      r1, 0xFF0000
 0004: 2E 00        lb      r0, 0(r1)
 0006: 82 00        sb      r0, 0(r1)
 0008: 13 F8        bra     .loop
-000A: C7 00 00 00  halt"#.to_string(),
+000A: 13 FC        bra     halt"#.to_string(),
         },
     ]
 }

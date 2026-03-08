@@ -295,7 +295,6 @@ impl Assembler {
             "zxt" => self.encode_alu(&operands, Opcode::Zxt, "zxt", line_num),
 
             // Pseudo-instructions
-            "halt" => vec![0x00], // Jump to address 0 (infinite loop)
             "nop" => vec![0x00],  // add r0,r0
 
             _ => {
