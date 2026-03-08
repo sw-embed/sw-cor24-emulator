@@ -47,6 +47,16 @@ fn test_count_down() {
 }
 
 #[test]
+fn test_led_blink() {
+    let cpu = load_and_run(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/programs/led_blink.lgo"),
+        0,
+        100_000,
+    );
+    assert_eq!(cpu.io.uart_output, "LLLLL", "Should print 'L' five times");
+}
+
+#[test]
 fn test_sieve() {
     let cpu = load_and_run(
         concat!(env!("CARGO_MANIFEST_DIR"), "/docs/research/asld24/sieve.lgo"),
