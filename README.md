@@ -7,10 +7,10 @@ architecture. Written in Rust and compiled to WebAssembly.
 **[Live Demo](https://sw-embed.github.io/cor24-rs/)**
 
 ### Assembler Tab
-![COR24 Assembler Interface](images/assembler-tab-2026-03-08T07-55-07-538Z.png?ts=1772956521846)
+![COR24 Assembler Interface](images/assembler-tab-full-2026-03-10T05-48-01-034Z.png?ts=1773121722)
 
 ### Rust Tab
-![COR24 Rust Pipeline Interface](images/rust-tab-2026-03-08T07-55-15-347Z.png?ts=1772956521846)
+![COR24 Rust Pipeline Interface](images/rust-tab-final-2026-03-10T05-51-00-545Z.png?ts=1773121722)
 
 ## Features
 
