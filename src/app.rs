@@ -1425,10 +1425,10 @@ fn capture_cpu_state_initial(cpu: &WasmCpu) -> EmulatorState {
 
 fn get_rust_examples() -> Vec<RustExample> {
     vec![
-        // 1. Add
+        // Demo 1: Blinky
         RustExample {
-            name: "Add".to_string(),
-            description: "Compute 100 + 200 + 42 = 342, return in r0".to_string(),
+            name: "Blinky".to_string(),
+            description: "Toggle LED with delay loop".to_string(),
             rust_source: r#"#[no_mangle]
 pub unsafe fn demo_blinky() -> ! {
     loop {
