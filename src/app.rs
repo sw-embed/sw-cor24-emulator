@@ -1794,7 +1794,73 @@ mmio_write:
     pop     r2
     jmp     (r2)"#.to_string(),
         },
-        // Demo 6: Nested Calls
+        // Demo 6: Memory Access
+        RustExample {
+            name: "Memory Access".to_string(),
+            description: "Store and load values from memory".to_string(),
+            rust_source: r#"#[no_mangle]
+pub unsafe fn demo_memory() {
+    let addr: *mut u8 = 0x0080 as *mut u8;
+    let val: u8 = 100;
+
+    // Store byte
+    *addr = val;
+
+    // Store word (at offset +4)
+    let waddr: *mut u16 = 0x0084 as *mut u16;
+    *waddr = val as u16;
+
+    // Load them back
+    let b = *addr;           // 100
+    let w = *waddr;          // 100
+
+    // Show result on LED
+    mmio_write(LED_ADDR, (b as u16) + w);
+    loop {}  // halt
+}"#.to_string(),
+            msp430_asm: r#"demo_memory:
+	mov	#100, r12
+	mov.b	r12, &0x0080      ; store byte
+	mov	r12, &0x0084      ; store word
+	mov.b	&0x0080, r13      ; load byte
+	add	&0x0084, r13      ; load word, add
+	mov	#-256, r12
+	call	#mmio_write
+.LBB_1:
+	jmp	.LBB_1"#.to_string(),
+            cor24_assembly: r#"; --- demo_memory: store and load values from memory ---
+demo_memory:
+    lc      r0, 100           ; val = 100
+    la      r1, 0x000080      ; addr = 0x0080
+
+    ; Store byte
+    sb      r0, 0(r1)         ; mem[0x0080] = 100
+
+    ; Store word (at offset +4)
+    sw      r0, 4(r1)         ; mem[0x0084..87] = 100
+
+    ; Load them back
+    lb      r2, 0(r1)         ; r2 = mem[0x0080] = 100
+    lw      r3, 4(r1)         ; r3 = mem[0x0084] = 100
+
+    ; Show result on LED: 100 + 100 = 200
+    add     r2, r3
+    la      r0, 0xFF0000
+    mov     r1, r2
+    la      r3, .Lret_0
+    push    r3
+    la      r3, mmio_write
+    jmp     (r3)
+    .Lret_0:
+.LBB_1:
+    bra     .LBB_1
+
+mmio_write:
+    sw      r1, 0(r0)
+    pop     r2
+    jmp     (r2)"#.to_string(),
+        },
+        // Demo 7: Nested Calls
         RustExample {
             name: "Nested Calls".to_string(),
             description: "Function call chain showing stack frames".to_string(),
@@ -1923,7 +1989,7 @@ uart_putc:
     pop     r2
     jmp     (r2)"#.to_string(),
         },
-        // Demo 7: Stack Variables
+        // Demo 8: Stack Variables
         RustExample {
             name: "Stack Variables".to_string(),
             description: "Local variables and register spilling".to_string(),
@@ -2106,7 +2172,7 @@ uart_putc:
     pop     r2
     jmp     (r2)"#.to_string(),
         },
-        // Demo 8: UART Hello World
+        // Demo 9: UART Hello World
         RustExample {
             name: "UART Hello".to_string(),
             description: "Write \"Hello\\n\" to UART output".to_string(),
