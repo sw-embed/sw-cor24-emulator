@@ -75,21 +75,32 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
         ("READY", "emu-state emu-ready")
     };
 
-    // LED and switch — duty cycle percentage when running, ON/OFF when paused
+    // LED display: when running show duty cycle %, when paused show actual hardware state
+    let led_is_on = (state.led_value & 1) == 1;
     let duty = state.led_duty_cycle;
-    let led_class = if duty > 0.0 { "led led-on led-large" } else { "led led-off led-large" };
-    let led_status = if props.is_running && duty > 0.01 && duty < 0.99 {
-        format!("{:.0}%", duty * 100.0)
-    } else if duty >= 0.99 {
-        "ON".to_string()
+    let (led_class, led_status, led_style) = if props.is_running {
+        // Running: show duty cycle with proportional opacity
+        let class = if duty > 0.0 { "led led-on led-large" } else { "led led-off led-large" };
+        let status = if duty > 0.01 && duty < 0.99 {
+            format!("{:.0}%", duty * 100.0)
+        } else if duty >= 0.99 {
+            "ON".to_string()
+        } else {
+            "OFF".to_string()
+        };
+        let style = if duty > 0.0 && duty < 1.0 {
+            format!("opacity: {:.2};", 0.3 + duty * 0.7)
+        } else {
+            String::new()
+        };
+        (class, status, style)
     } else {
-        "OFF".to_string()
-    };
-    // Dim LED opacity proportionally (0.3 min so it's still visible)
-    let led_style = if duty > 0.0 && duty < 1.0 {
-        format!("opacity: {:.2};", 0.3 + duty * 0.7)
-    } else {
-        String::new()
+        // Paused: show actual binary LED state
+        if led_is_on {
+            ("led led-on led-large", "ON".to_string(), String::new())
+        } else {
+            ("led led-off led-large", "OFF".to_string(), String::new())
+        }
     };
     let switch_on = (props.switch_value & 1) == 1;
     let switch_class = if switch_on { "switch switch-on switch-large" } else { "switch switch-off switch-large" };
