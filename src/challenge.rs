@@ -288,8 +288,7 @@ level_b:
             "Stack Variables".to_string(),
             "Local variables and register spilling".to_string(),
             r#"; Stack Variables: Local vars on the stack
-; Demonstrates frame pointer, local storage, and
-; register save/restore (spilling)
+; Demonstrates register spilling via push/pop
 ;
 ; Computes: a=seed+1, b=a+seed, c=b+a, result=a^b^c
 ; with seed=7: a=8, b=15, c=23, result=8^15^23=16
@@ -304,38 +303,32 @@ ret_main:
         sb      r0,0(r1)        ; Display on LED
 halt:   bra     halt
 
-        ; --- compute(seed in r0): local vars on stack ---
+        ; --- compute(seed in r0) ---
+        ; Uses r0-r2 for values, spills to stack when
+        ; we run out of registers
 compute:
-        push    fp
-        push    r1              ; save return addr
-        mov     fp,sp
-        sub     sp,9            ; 3 local words (a, b, c)
+        push    r1              ; spill return addr
 
         ; a = seed + 1
-        mov     r1,r0           ; r1 = seed
-        add     r0,1            ; r0 = seed + 1 = a
-        sw      r0,0(sp)        ; local[0] = a
+        mov     r1,r0           ; r1 = seed (keep copy)
+        add     r0,1            ; r0 = a = 8
 
         ; b = a + seed
-        add     r0,r1           ; r0 = a + seed = b
-        sw      r0,3(sp)        ; local[1] = b
+        mov     r2,r0           ; r2 = a (save)
+        add     r0,r1           ; r0 = b = a + seed = 15
 
-        ; c = b + a
-        lw      r1,0(sp)        ; r1 = a
-        add     r0,r1           ; r0 = b + a = c
-        sw      r0,6(sp)        ; local[2] = c
+        ; c = b + a  (need a, but r2 has it)
+        push    r0              ; spill b — out of regs
+        add     r0,r2           ; r0 = c = b + a = 23
 
         ; result = a ^ b ^ c
-        lw      r0,0(sp)        ; a
-        lw      r1,3(sp)        ; b
-        xor     r0,r1           ; a ^ b
-        lw      r1,6(sp)        ; c
-        xor     r0,r1           ; a ^ b ^ c
+        xor     r2,r0           ; r2 = a ^ c
+        pop     r0              ; restore b
+        xor     r2,r0           ; r2 = a ^ c ^ b = 16
+        mov     r0,r2           ; r0 = result
 
-        mov     sp,fp
-        pop     r1
-        pop     fp
-        jmp     (r1)            ; return result in r0
+        pop     r1              ; restore return addr
+        jmp     (r1)
 "#
             .to_string(),
         ),
