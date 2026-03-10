@@ -1842,6 +1842,30 @@ header h1 {
     font-family: 'Monaco', monospace;
 }
 
+.uart-terminal {
+    margin-left: 12px;
+    padding: 2px 8px;
+    background: #0a0a1a;
+    border: 1px solid #333;
+    border-radius: 3px;
+    max-width: 500px;
+    overflow-x: auto;
+}
+
+.uart-label {
+    font-size: 0.75em;
+    color: #888;
+    font-family: 'Monaco', monospace;
+    margin-right: 4px;
+}
+
+.uart-output {
+    font-size: 0.85em;
+    color: #0f0;
+    font-family: 'Monaco', monospace;
+    white-space: pre;
+}
+
 .memory-section {
     margin-top: 12px;
 }

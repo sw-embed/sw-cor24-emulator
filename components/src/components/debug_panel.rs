@@ -6,6 +6,21 @@ use yew::prelude::*;
 
 use crate::EmulatorState;
 
+/// Format UART output as hex dump with ASCII sidebar (like od/hexdump)
+/// Shows: "48 65 6C 6C 6F 0A  Hello."
+fn format_uart_output(s: &str) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+    let bytes: Vec<u8> = s.bytes().collect();
+    let hex: Vec<String> = bytes.iter().map(|b| format!("{:02X}", b)).collect();
+    let ascii: String = bytes
+        .iter()
+        .map(|&b| if (0x20..0x7F).contains(&b) { b as char } else { '.' })
+        .collect();
+    format!("{}  {}", hex.join(" "), ascii)
+}
+
 #[derive(Properties, PartialEq)]
 pub struct DebugPanelProps {
     pub cpu_state: EmulatorState,
@@ -284,6 +299,12 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
                             <div class={led_class} style={led_style}>{"D2"}</div>
                             <span class="io-inline-status">{led_status}</span>
                         </div>
+                        if !state.uart_output.is_empty() {
+                            <div class="peripheral-section-inline uart-terminal" data-tooltip="UART output (0xFF0100)">
+                                <span class="uart-label">{"UART TX:"}</span>
+                                <span class="uart-output">{format_uart_output(&state.uart_output)}</span>
+                            </div>
+                        }
                     </div>
 
                     // Memory viewer - three regions

@@ -1,5 +1,7 @@
 //! Integration tests for COR24 emulator using as24-assembled .lgo files
 
+use cor24_emulator::assembler::Assembler;
+use cor24_emulator::challenge::get_examples;
 use cor24_emulator::cpu::executor::Executor;
 use cor24_emulator::cpu::state::CpuState;
 use cor24_emulator::loader::load_lgo;
@@ -78,4 +80,37 @@ fn test_sieve() {
         "1000 iterations\n1899 primes.\n",
         "Sieve should produce correct output"
     );
+}
+
+#[test]
+fn test_all_examples_assemble() {
+    let examples = get_examples();
+    for (name, _desc, source) in &examples {
+        let mut assembler = Assembler::new();
+        let result = assembler.assemble(source);
+        assert!(
+            result.errors.is_empty(),
+            "Example '{}' failed to assemble: {:?}",
+            name,
+            result.errors
+        );
+    }
+}
+
+/// Test that UART Hello example with TX busy polling assembles and runs correctly
+#[test]
+fn test_uart_hello_example() {
+    let mut assembler = Assembler::new();
+    let examples = get_examples();
+    let uart = examples.iter().find(|(name, _, _)| name == "UART Hello").unwrap();
+    let result = assembler.assemble(&uart.2);
+    assert!(result.errors.is_empty(), "UART Hello assembly errors: {:?}", result.errors);
+    let mut cpu = CpuState::new();
+    for (addr, byte) in result.bytes.iter().enumerate() {
+        cpu.memory[addr] = *byte;
+    }
+    cpu.pc = 0;
+    let executor = Executor::new();
+    executor.run(&mut cpu, 10_000);
+    assert_eq!(cpu.io.uart_output, "Hello\n", "UART Hello should output 'Hello\\n'");
 }

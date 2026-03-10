@@ -56,6 +56,8 @@ pub struct IoState {
     pub uart_tx: u8,
     /// UART TX busy flag (false = ready to transmit)
     pub uart_tx_busy: bool,
+    /// UART TX busy countdown (instructions remaining until TX ready)
+    pub uart_tx_countdown: u8,
     /// UART receive buffer
     pub uart_rx: u8,
     /// UART receive data ready flag
@@ -75,6 +77,7 @@ impl IoState {
             switches: 0x01, // S2 normally high (low = pressed)
             uart_tx: 0,
             uart_tx_busy: false, // TX starts ready
+            uart_tx_countdown: 0,
             uart_rx: 0,
             uart_rx_ready: false,
             uart_rx_overflow: false,
@@ -243,8 +246,9 @@ impl CpuState {
                 if value != 0 {
                     self.io.uart_output.push(value as char);
                 }
-                // Instant transmit in emulation (not busy)
-                self.io.uart_tx_busy = false;
+                // TX busy for 1 instruction cycle (simulates transmission)
+                self.io.uart_tx_busy = true;
+                self.io.uart_tx_countdown = 1;
             }
             IO_UARTSTAT => {
                 // Writing to status can clear overflow flag
@@ -253,6 +257,16 @@ impl CpuState {
                 }
             }
             _ => {} // Ignore unknown I/O address
+        }
+    }
+
+    /// Tick UART timers — call after each instruction execution
+    pub fn uart_tick(&mut self) {
+        if self.io.uart_tx_countdown > 0 {
+            self.io.uart_tx_countdown -= 1;
+            if self.io.uart_tx_countdown == 0 {
+                self.io.uart_tx_busy = false;
+            }
         }
     }
 

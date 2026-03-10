@@ -45,6 +45,7 @@ pub struct EmulatorState {
     pub prev_prev_memory_stack: Vec<u8>,
     pub current_instruction: String,
     pub assembled_lines: Vec<String>,
+    pub uart_output: String,
 }
 
 /// Wizard steps for progressive disclosure

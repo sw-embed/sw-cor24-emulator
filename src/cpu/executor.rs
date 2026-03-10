@@ -399,6 +399,7 @@ impl Executor {
 
         cpu.cycles += 1;
         cpu.instructions += 1;
+        cpu.uart_tick();
 
         ExecuteResult::Ok
     }

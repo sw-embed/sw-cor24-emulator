@@ -424,6 +424,7 @@ pub fn app() -> Html {
                     prev_prev_memory_stack: memory_stack,
                     current_instruction: new_cpu.get_current_instruction(),
                     assembled_lines,
+                    uart_output: new_cpu.get_uart_output(),
                 });
 
                 rust_cpu.set(new_cpu);
@@ -507,6 +508,7 @@ pub fn app() -> Html {
                     prev_prev_memory_stack: prev_state.prev_memory_stack,
                     current_instruction: new_cpu.get_current_instruction(),
                     assembled_lines: prev_state.assembled_lines,
+                    uart_output: new_cpu.get_uart_output(),
                 });
                 rust_cpu.set(new_cpu);
             }
@@ -668,6 +670,7 @@ pub fn app() -> Html {
                         prev_prev_memory_stack: prev_prev_mem_stack,
                         current_instruction: current_cpu.get_current_instruction(),
                         assembled_lines: asm_lines.clone(),
+                        uart_output: current_cpu.get_uart_output(),
                     });
 
                     if halted {
@@ -781,6 +784,7 @@ pub fn app() -> Html {
                         prev_prev_memory_stack: memory_stack,
                         current_instruction: new_cpu.get_current_instruction(),
                         assembled_lines,
+                        uart_output: new_cpu.get_uart_output(),
                     });
 
                     rust_cpu.set(new_cpu);
@@ -1443,6 +1447,7 @@ fn capture_cpu_state(cpu: &WasmCpu, prev: &EmulatorState) -> EmulatorState {
         prev_prev_memory_stack: prev.prev_memory_stack.clone(),
         current_instruction: cpu.get_current_instruction(),
         assembled_lines: cpu.get_assembled_lines(),
+        uart_output: cpu.get_uart_output(),
     }
 }
 
@@ -1901,39 +1906,152 @@ mmio_write:
     pop     r2
     jmp     (r2)"#.to_string(),
         },
-        // Demo 7: Nested Calls
+        // Demo 7: Software Multiply
+        RustExample {
+            name: "Multiply".to_string(),
+            description: "6 × 7 = 42 via loop, print to UART".to_string(),
+            rust_source: r#"// Software multiply: 6 × 7 = 42 via repeated addition
+// Prints "42\n" to UART
+
+#[no_mangle]
+pub unsafe fn demo_multiply() {
+    let mut sum: u16 = 0;
+    for _ in 0..7 {
+        sum += 6;     // repeated addition
+    }
+    // sum = 42, print as decimal
+    let tens = sum / 10;       // 4
+    let ones = sum % 10;       // 2
+    uart_putc(tens as u8 + b'0');  // '4'
+    uart_putc(ones as u8 + b'0'); // '2'
+    uart_putc(b'\n');
+    loop {}
+}"#.to_string(),
+            msp430_asm: r#"demo_multiply:
+	clr	r12               ; sum = 0
+	mov	#7, r13           ; counter = 7
+.Lloop:
+	add	#6, r12           ; sum += 6
+	dec	r13
+	jnz	.Lloop
+	; r12 = 42
+	; divide by 10 via repeated subtraction
+	clr	r13               ; tens = 0
+.Ldiv:
+	cmp	#10, r12
+	jl	.Ldone
+	sub	#10, r12
+	inc	r13
+	jmp	.Ldiv
+.Ldone:
+	add	#48, r13          ; tens + '0'
+	push	r12
+	mov	r13, r12
+	call	#uart_putc
+	pop	r12
+	add	#48, r12          ; ones + '0'
+	call	#uart_putc
+	mov	#10, r12          ; '\n'
+	call	#uart_putc
+.Lhalt:
+	jmp	.Lhalt"#.to_string(),
+            cor24_assembly: r#"; --- demo_multiply: 6 × 7 = 42 via repeated addition ---
+; Prints "42\n" to UART
+
+demo_multiply:
+    lc      r0, 0             ; sum = 0
+    lc      r1, 7             ; counter = 7
+.Lloop:
+    add     r0, 6             ; sum += 6
+    push    r0                ; save sum
+    lc      r0, 1
+    sub     r1, r0            ; counter--
+    pop     r0                ; restore sum
+    ceq     r1, z
+    brf     .Lloop            ; loop while counter != 0
+
+    ; r0 = 42, divide by 10 via repeated subtraction
+    lc      r1, 0             ; tens = 0
+.Ldiv10:
+    lc      r2, 10
+    clu     r0, r2            ; r0 < 10?
+    brt     .Ldiv_done        ; yes: ones in r0, tens in r1
+    sub     r0, r2            ; r0 -= 10
+    add     r1, 1             ; tens++
+    bra     .Ldiv10
+.Ldiv_done:
+
+    ; r0 = ones (2), r1 = tens (4)
+    push    r0                ; save ones
+    lc      r0, 48            ; '0'
+    add     r0, r1            ; r0 = '4'
+    la      r2, .Lret_tens
+    push    r2
+    bra     uart_putc
+.Lret_tens:
+
+    pop     r0                ; restore ones
+    lc      r1, 48            ; '0'
+    add     r0, r1            ; r0 = '2'
+    la      r2, .Lret_ones
+    push    r2
+    bra     uart_putc
+.Lret_ones:
+
+    lc      r0, 10            ; '\n'
+    la      r2, .Lhalt
+    push    r2
+    bra     uart_putc
+.Lhalt:
+    bra     .Lhalt
+
+; uart_putc: poll TX busy, send byte in r0
+uart_putc:
+    push    r0                ; save char
+    la      r1, 0xFF0100      ; UART base
+.Ltx_wait:
+    lb      r2, 1(r1)         ; read status
+    lcu     r0, 128
+    and     r2, r0            ; isolate bit 7 (TX busy)
+    ceq     r2, z
+    brf     .Ltx_wait         ; spin while busy
+    pop     r0                ; restore char
+    sb      r0, 0(r1)         ; transmit byte
+    pop     r2
+    jmp     (r2)"#.to_string(),
+        },
+        // Demo 8: Nested Calls
         RustExample {
             name: "Nested Calls".to_string(),
             description: "Function call chain showing stack frames".to_string(),
-            rust_source: r#"#[inline(never)]
-pub unsafe fn level_c(x: u16, y: u16) -> u16 {
-    mmio_write(LED_ADDR, x);
-    uart_putc(y);
+            rust_source: r#"// 3-level call chain: demo → a → b → c
+// Shows stack frames and calling convention
+// Result: LED = 173
+
+#[inline(never)]
+pub unsafe fn level_c(x: u16) {
+    mmio_write(LED_ADDR, x);  // LED = 173
     loop {}  // halt — 3 stack frames live
 }
 
 #[inline(never)]
-pub unsafe fn level_b(x: u16) -> u16 {
-    let doubled = x + x;
-    let offset = doubled + 3;
-    level_c(offset, x)
+pub unsafe fn level_b(x: u16) {
+    let doubled = x + x;      // 170
+    let offset = doubled + 3;  // 173
+    level_c(offset)
 }
 
 #[inline(never)]
-pub unsafe fn level_a(x: u16) -> u16 {
-    let y = x + 10;
-    level_b(y)
+pub unsafe fn level_a(x: u16) {
+    level_b(x + 10)            // level_b(85)
 }
 
 #[no_mangle]
 pub unsafe fn demo_nested() {
-    let btn = mmio_read(LED_ADDR);
-    level_a(btn + 5);
+    level_a(75);               // 'K'
 }"#.to_string(),
             msp430_asm: r#"demo_nested:
-	mov	#-256, r12
-	call	#mmio_read
-	add	#5, r12
+	mov	#75, r12
 	call	#level_a
 
 level_a:
@@ -1947,88 +2065,53 @@ level_b:
 	call	#level_c
 
 level_c:
-	push	r10
-	mov	r13, r10
 	mov	r12, r13
 	mov	#-256, r12
 	call	#mmio_write
-	mov	r10, r12
-	call	#uart_putc
 .LBB14_1:
 	jmp	.LBB14_1"#.to_string(),
-            cor24_assembly: r#"; --- demo_nested: 4-level call chain ---
+            cor24_assembly: r#"; --- demo_nested: 3-level call chain ---
+; demo → level_a → level_b → level_c
+; arg in r0, return addr pushed on stack
+; Result: LED = 173
+
 demo_nested:
-    la      r0, 0xFF0000
-    la      r2, .Lret_16
+    lc      r0, 75            ; start with 75
+    la      r2, .Lhalt
     push    r2
-    la      r2, mmio_read
-    jmp     (r2)
-    .Lret_16:
-    add     r0, 5
-    la      r2, .Lret_17
-    push    r2
-    la      r2, level_a
-    jmp     (r2)
-    .Lret_17:
+    bra     level_a
+.Lhalt:
+    bra     .Lhalt
 
+; level_a(x): call level_b(x + 10)
 level_a:
-    add     r0, 10
-    la      r2, .Lret_26
+    push    r2                ; save return addr (shows frame)
+    add     r0, 10            ; r0 = x + 10 = 85
+    la      r2, .Lret_a
     push    r2
-    la      r2, level_b
-    jmp     (r2)
-    .Lret_26:
+    bra     level_b
+.Lret_a:
+    pop     r2
+    jmp     (r2)              ; return (not reached)
 
+; level_b(x): call level_c(x*2+3)
 level_b:
-    mov     r1, r0
-    add     r0, r0
-    add     r0, 3
-    la      r2, .Lret_27
+    push    r2                ; save return addr
+    add     r0, r0            ; doubled = 170
+    add     r0, 3             ; offset = 173
+    la      r2, .Lret_b
     push    r2
-    la      r2, level_c
-    jmp     (r2)
-    .Lret_27:
+    bra     level_c
+.Lret_b:
+    pop     r2
+    jmp     (r2)              ; return (not reached)
 
+; level_c(x in r0): LED=x, halt
 level_c:
-    lw      r0, 18(fp)
-    push    r0
-    sw      r1, 18(fp)
-    mov     r1, r0
-    la      r0, 0xFF0000
-    la      r2, .Lret_28
-    push    r2
-    la      r2, mmio_write
-    jmp     (r2)
-    .Lret_28:
-    lw      r0, 18(fp)
-    la      r2, .Lret_29
-    push    r2
-    la      r2, uart_putc
-    jmp     (r2)
-    .Lret_29:
-.LBB14_1:
-    bra     .LBB14_1
-
-mmio_read:
-    lw      r0, 0(r0)
-    pop     r2
-    jmp     (r2)
-
-mmio_write:
-    sw      r1, 0(r0)
-    pop     r2
-    jmp     (r2)
-
-uart_putc:
-    mov     r1, r0
-    la      r0, 0xFF0100
-    la      r2, .Lret_30
-    push    r2
-    la      r2, mmio_write
-    jmp     (r2)
-    .Lret_30:
-    pop     r2
-    jmp     (r2)"#.to_string(),
+    la      r1, 0xFF0000
+    sb      r0, 0(r1)         ; LED = x = 173
+.Lhalt_c:
+    bra     .Lhalt_c          ; halt with 3 frames live"#.to_string(),
         },
         // Demo 8: Stack Variables
         RustExample {
@@ -2036,200 +2119,108 @@ uart_putc:
             description: "Local variables and register spilling".to_string(),
             rust_source: r#"#[inline(never)]
 pub unsafe fn accumulate(seed: u16) -> u16 {
-    let a = seed + 1;
-    let b = a + seed;
-    let c = b + a;
-    let d = c + b;
-    let e = d + c;
-    let result = a ^ b ^ c ^ d ^ e;
-    mmio_write(LED_ADDR, result);
-    uart_putc(a);
-    uart_putc(b);
-    uart_putc(c);
-    uart_putc(d);
-    uart_putc(e);
-    loop {}  // halt with spill slots visible
+    let a = seed + 1;       // 33
+    let b = a + seed;       // 65
+    let c = b + a;          // 98
+    let result = a ^ b ^ c; // 2
+    result
 }
 
 #[no_mangle]
 pub unsafe fn demo_stack_vars() {
-    let x = mmio_read(LED_ADDR);
-    accumulate(x + 1);
+    let r = accumulate(32);
+    mmio_write(LED_ADDR, r); // LED = 2
+    loop {}
 }"#.to_string(),
             msp430_asm: r#"demo_stack_vars:
-	mov	#-256, r12
-	call	#mmio_read
-	inc	r12
+	mov	#32, r12
 	call	#accumulate
-
-accumulate:
-	push	r6
-	push	r7
-	push	r8
-	push	r9
-	push	r10
-	mov	r12, r10          ; seed
-	mov	r10, r6
-	inc	r6                ; a = seed+1
-	add	r6, r10           ; b = a+seed
-	mov	r10, r9
-	add	r6, r9            ; c = b+a
-	mov	r10, r13
-	xor	r6, r13
-	xor	r9, r13
-	mov	r9, r8
-	add	r10, r8           ; d = c+b
-	xor	r8, r13
-	mov	r8, r7
-	add	r9, r7            ; e = d+c
-	xor	r7, r13           ; result = a^b^c^d^e
+	mov	r12, r13
 	mov	#-256, r12
 	call	#mmio_write
-	mov	r6, r12
-	call	#uart_putc
-	; ... (sends b,c,d,e via uart_putc)
-.LBB1_1:
-	jmp	.LBB1_1"#.to_string(),
-            cor24_assembly: r#"; --- demo_stack_vars: 5 callee-saved register spills ---
-demo_stack_vars:
-    la      r0, 0xFF0000
-    la      r2, .Lret_18
-    push    r2
-    la      r2, mmio_read
-    jmp     (r2)
-    .Lret_18:
-    add     r0, 1
-    la      r2, .Lret_19
-    push    r2
-    la      r2, accumulate
-    jmp     (r2)
-    .Lret_19:
+.LBB0_1:
+	jmp	.LBB0_1
 
 accumulate:
-    lw      r0, 6(fp)
-    push    r0
-    lw      r0, 9(fp)
-    push    r0
-    lw      r0, 12(fp)
-    push    r0
-    lw      r0, 15(fp)
-    push    r0
-    lw      r0, 18(fp)
-    push    r0
-    sw      r0, 18(fp)
-    lw      r0, 18(fp)
-    sw      r0, 6(fp)
-    lw      r0, 6(fp)
-    add     r0, 1
-    sw      r0, 6(fp)
-    lw      r0, 18(fp)
-    lw      r1, 6(fp)
-    add     r0, r1
-    sw      r0, 18(fp)
-    lw      r0, 18(fp)
-    sw      r0, 15(fp)
-    lw      r0, 15(fp)
-    lw      r1, 6(fp)
-    add     r0, r1
-    sw      r0, 15(fp)
-    lw      r1, 18(fp)
-    lw      r0, 6(fp)
-    xor     r1, r0
-    lw      r0, 15(fp)
-    xor     r1, r0
-    lw      r0, 15(fp)
-    sw      r0, 12(fp)
-    lw      r0, 12(fp)
-    lw      r1, 18(fp)
-    add     r0, r1
-    sw      r0, 12(fp)
-    lw      r0, 12(fp)
-    xor     r1, r0
-    lw      r0, 12(fp)
-    sw      r0, 9(fp)
-    lw      r0, 9(fp)
-    lw      r1, 15(fp)
-    add     r0, r1
-    sw      r0, 9(fp)
-    lw      r0, 9(fp)
-    xor     r1, r0
-    la      r0, 0xFF0000
-    la      r2, .Lret_0
-    push    r2
-    la      r2, mmio_write
-    jmp     (r2)
-    .Lret_0:
-    lw      r0, 6(fp)
-    la      r2, .Lret_1
-    push    r2
-    la      r2, uart_putc
-    jmp     (r2)
-    .Lret_1:
-    lw      r0, 18(fp)
-    la      r2, .Lret_2
-    push    r2
-    la      r2, uart_putc
-    jmp     (r2)
-    .Lret_2:
-    lw      r0, 15(fp)
-    la      r2, .Lret_3
-    push    r2
-    la      r2, uart_putc
-    jmp     (r2)
-    .Lret_3:
-    lw      r0, 12(fp)
-    la      r2, .Lret_4
-    push    r2
-    la      r2, uart_putc
-    jmp     (r2)
-    .Lret_4:
-    lw      r0, 9(fp)
-    la      r2, .Lret_5
-    push    r2
-    la      r2, uart_putc
-    jmp     (r2)
-    .Lret_5:
-.LBB1_1:
-    bra     .LBB1_1
+	push	r10
+	push	r9
+	mov	r12, r10          ; seed = 32
+	mov	r10, r9
+	inc	r9                ; a = 33
+	add	r9, r10           ; b = 65
+	mov	r10, r12
+	add	r9, r12           ; c = 98
+	xor	r9, r10
+	xor	r12, r10          ; result = a^b^c = 2
+	mov	r10, r12
+	pop	r9
+	pop	r10
+	ret"#.to_string(),
+            cor24_assembly: r#"; --- demo_stack_vars: register spilling via push/pop ---
+; seed=32: a=33, b=65, c=98, result=a^b^c=2
+; Only 3 GPRs (r0,r1,r2) — must spill to stack
 
-mmio_read:
-    lw      r0, 0(r0)
-    pop     r2
-    jmp     (r2)
-
-mmio_write:
-    sw      r1, 0(r0)
-    pop     r2
-    jmp     (r2)
-
-uart_putc:
-    mov     r1, r0
-    la      r0, 0xFF0100
-    la      r2, .Lret_30
+demo_stack_vars:
+    lc      r0, 32            ; seed = 32
+    la      r2, .Lret_main
     push    r2
-    la      r2, mmio_write
-    jmp     (r2)
-    .Lret_30:
-    pop     r2
+    bra     accumulate
+.Lret_main:
+    ; r0 = result
+    la      r1, 0xFF0000
+    sb      r0, 0(r1)         ; LED = result
+.Lhalt:
+    bra     .Lhalt
+
+; accumulate(seed in r0): returns a^b^c in r0
+accumulate:
+    ; r0 = seed = 32
+    mov     r1, r0            ; r1 = seed
+    add     r0, 1             ; r0 = a = 33
+    push    r0                ; spill a (need later)
+
+    ; b = a + seed
+    add     r0, r1            ; r0 = b = a + seed = 65
+    push    r0                ; spill b
+
+    ; c = b + a — retrieve a from stack
+    pop     r1                ; r1 = b
+    pop     r2                ; r2 = a
+    push    r2                ; save a back
+    push    r1                ; save b back
+    mov     r0, r1            ; r0 = b (copy)
+    add     r0, r2            ; r0 = c = b + a = 98
+
+    ; result = a ^ b ^ c
+    ; r0=c, need a and b from stack
+    pop     r1                ; r1 = b
+    pop     r2                ; r2 = a
+    xor     r2, r1            ; r2 = a ^ b
+    xor     r2, r0            ; r2 = a ^ b ^ c = result
+    mov     r0, r2            ; r0 = result
+
+    pop     r2                ; return address
     jmp     (r2)"#.to_string(),
         },
         // Demo 9: UART Hello World
         RustExample {
             name: "UART Hello".to_string(),
             description: "Write \"Hello\\n\" to UART output".to_string(),
-            rust_source: r#"#[inline(never)]
-pub unsafe fn uart_putc(ch: u16) {
-    mmio_write(UART_DATA, ch);
+            rust_source: r#"const UART_DATA: *mut u8 = 0xFF0100 as _;
+const UART_STAT: *const u8 = 0xFF0101 as _;
+
+#[inline(never)]
+pub unsafe fn uart_putc(ch: u8) {
+    // Poll TX busy (bit 7) before sending
+    while (*UART_STAT) & 0x80 != 0 {}
+    *UART_DATA = ch;
 }
 
 #[no_mangle]
 pub unsafe fn demo_uart_hello() {
-    uart_putc(b'H' as u16);
-    uart_putc(b'e' as u16);
-    uart_putc(b'l' as u16);
-    uart_putc(b'l' as u16);
-    uart_putc(b'o' as u16);
-    uart_putc(b'\n' as u16);
+    for &ch in b"Hello\n" {
+        uart_putc(ch);
+    }
     loop {}  // halt
 }"#.to_string(),
             msp430_asm: r#"demo_uart_hello:
@@ -2254,59 +2245,53 @@ uart_putc:
 	call	#mmio_write
 	ret"#.to_string(),
             cor24_assembly: r#"; --- demo_uart_hello: send "Hello\n" via UART ---
+; Polls TX busy (bit 7 of status) before each byte
 demo_uart_hello:
     lc      r0, 72            ; 'H'
     la      r2, .Lret_20
     push    r2
-    la      r2, uart_putc
-    jmp     (r2)
+    bra     uart_putc
     .Lret_20:
     lc      r0, 101           ; 'e'
     la      r2, .Lret_21
     push    r2
-    la      r2, uart_putc
-    jmp     (r2)
+    bra     uart_putc
     .Lret_21:
     lc      r0, 108           ; 'l'
     la      r2, .Lret_22
     push    r2
-    la      r2, uart_putc
-    jmp     (r2)
+    bra     uart_putc
     .Lret_22:
     lc      r0, 108           ; 'l'
     la      r2, .Lret_23
     push    r2
-    la      r2, uart_putc
-    jmp     (r2)
+    bra     uart_putc
     .Lret_23:
     lc      r0, 111           ; 'o'
     la      r2, .Lret_24
     push    r2
-    la      r2, uart_putc
-    jmp     (r2)
+    bra     uart_putc
     .Lret_24:
     lc      r0, 10            ; '\n'
     la      r2, .Lret_25
     push    r2
-    la      r2, uart_putc
-    jmp     (r2)
+    bra     uart_putc
     .Lret_25:
 .LBB10_1:
     bra     .LBB10_1
 
+; uart_putc: poll TX busy, then send byte in r0
 uart_putc:
-    mov     r1, r0
-    la      r0, 0xFF0100
-    la      r2, .Lret_30
-    push    r2
-    la      r2, mmio_write
-    jmp     (r2)
-    .Lret_30:
-    pop     r2
-    jmp     (r2)
-
-mmio_write:
-    sw      r1, 0(r0)
+    push    r0                ; save char
+    la      r1, 0xFF0100      ; UART base
+.Ltx_wait:
+    lb      r2, 1(r1)         ; read status
+    lcu     r0, 128
+    and     r2, r0            ; isolate bit 7 (TX busy)
+    ceq     r2, z
+    brf     .Ltx_wait         ; spin while busy
+    pop     r0                ; restore char
+    sb      r0, 0(r1)         ; transmit byte
     pop     r2
     jmp     (r2)"#.to_string(),
         },
