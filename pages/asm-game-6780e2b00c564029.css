@@ -115,6 +115,11 @@ button.stop-btn:hover {
     background: #cc3333;
 }
 
+/* Tooltips: data-tooltip attribute, positioned by JS in index.html */
+[data-tooltip]:hover {
+    outline: 1px solid #00d9ff88;
+}
+
 /* Info text for stopped execution */
 .info-text {
     color: #00d9ff;
@@ -1798,19 +1803,6 @@ header h1 {
 
 .register-entry.warm .reg-value {
     color: #87ceeb;
-}
-
-.reg-tip {
-    font-size: 0.75em;
-    color: #999;
-    margin-left: 4px;
-    vertical-align: super;
-    cursor: help;
-    border: 1px solid #666;
-    border-radius: 50%;
-    padding: 1px 4px;
-    display: inline-block;
-    line-height: 1;
 }
 
 .emu-status-line {
