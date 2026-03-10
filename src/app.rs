@@ -234,6 +234,7 @@ pub fn app() -> Html {
                 state_handle: yew::UseStateHandle<EmulatorState>,
                 stop_handle: Rc<Cell<bool>>,
                 switch_handle: Rc<Cell<u8>>,
+                cumulative_led_on: u64,
             ) {
                 // Check if stop was requested (immediate - no state delay)
                 if stop_handle.get() {
@@ -254,8 +255,7 @@ pub fn app() -> Html {
                 // Execute a batch of instructions per animation frame
                 let mut halted = false;
                 let mut error_msg = None;
-                let mut led_on_count: u32 = 0;
-                let mut led_total: u32 = 0;
+                let mut batch_led_on: u64 = 0;
                 for _ in 0..500 {
                     if current_cpu.is_halted() {
                         halted = true;
@@ -266,18 +266,18 @@ pub fn app() -> Html {
                         halted = true;
                         break;
                     }
-                    led_total += 1;
                     if current_cpu.get_led_value() & 1 == 1 {
-                        led_on_count += 1;
+                        batch_led_on += 1;
                     }
                 }
 
                 // Update CPU state for UI refresh (includes LED state)
                 current_cpu.set_switches(switch_handle.get());
                 let mut state = capture_cpu_state(&current_cpu, &state_handle);
-                if led_total > 0 {
-                    state.led_duty_cycle = led_on_count as f32 / led_total as f32;
-                }
+                let total_on = cumulative_led_on + batch_led_on;
+                state.led_on_count = total_on;
+                let total_instr = state.instruction_count as u64;
+                state.led_duty_cycle = if total_instr > 0 { total_on as f32 / total_instr as f32 } else { 0.0 };
                 state_handle.set(state);
                 cpu_handle.set(current_cpu.clone());
 
@@ -299,14 +299,14 @@ pub fn app() -> Html {
                 } else {
                     // Continue running - 50ms delay allows browser to process input events
                     gloo::timers::callback::Timeout::new(50, move || {
-                        run_step(current_cpu, cpu_handle, output_handle, running_handle, state_handle, stop_handle, switch_handle);
+                        run_step(current_cpu, cpu_handle, output_handle, running_handle, state_handle, stop_handle, switch_handle, total_on);
                     }).forget();
                 }
             }
 
             // Start the first step
             gloo::timers::callback::Timeout::new(0, move || {
-                run_step(current_cpu, cpu_handle, output_handle, running_handle, state_handle, stop_handle, switch_handle);
+                run_step(current_cpu, cpu_handle, output_handle, running_handle, state_handle, stop_handle, switch_handle, 0);
             }).forget();
         })
     };
@@ -402,6 +402,7 @@ pub fn app() -> Html {
                     is_halted: new_cpu.is_halted(),
                     led_value: new_cpu.get_led_value(),
                     led_duty_cycle: if (new_cpu.get_led_value() & 1) == 1 { 1.0 } else { 0.0 },
+                    led_on_count: 0,
                     instruction_count: new_cpu.get_instruction_count(),
                     memory_low: memory_low.clone(),
                     memory_io_led: memory_io_led.clone(),
@@ -484,6 +485,7 @@ pub fn app() -> Html {
                     is_halted: new_cpu.is_halted(),
                     led_value: new_cpu.get_led_value(),
                     led_duty_cycle: if (new_cpu.get_led_value() & 1) == 1 { 1.0 } else { 0.0 },
+                    led_on_count: 0,
                     instruction_count: new_cpu.get_instruction_count(),
                     memory_low,
                     memory_io_led,
@@ -562,6 +564,7 @@ pub fn app() -> Html {
                     steps: u32,
                     stop_flag: Rc<Cell<bool>>,
                     switch_state: Rc<Cell<u8>>,
+                    cumulative_led_on: u64,
                 ) {
                     // Check stop flag
                     if stop_flag.get() {
@@ -575,10 +578,9 @@ pub fn app() -> Html {
 
                     // Execute a batch of instructions
                     let mut halted = false;
-                    let mut led_on_count: u32 = 0;
-                    let mut led_total: u32 = 0;
-                    for _ in 0..10 {
-                        if current_cpu.is_halted() || current_cpu.should_stop_for_led() {
+                    let mut batch_led_on: u64 = 0;
+                    for _ in 0..500 {
+                        if current_cpu.is_halted() {
                             halted = true;
                             break;
                         }
@@ -586,9 +588,8 @@ pub fn app() -> Html {
                             halted = true;
                             break;
                         }
-                        led_total += 1;
                         if current_cpu.get_led_value() & 1 == 1 {
-                            led_on_count += 1;
+                            batch_led_on += 1;
                         }
                     }
 
@@ -632,6 +633,7 @@ pub fn app() -> Html {
                     let next_prev_prev_mem_io_uart = prev_mem_io_uart.clone();
                     let next_prev_prev_mem_stack = prev_mem_stack.clone();
 
+                    let next_led_on = cumulative_led_on + batch_led_on;
                     state.set(EmulatorState {
                         registers,
                         prev_registers: prev_regs,
@@ -640,9 +642,11 @@ pub fn app() -> Html {
                         condition_flag: current_cpu.get_condition_flag(),
                         is_halted: current_cpu.is_halted(),
                         led_value: current_cpu.get_led_value(),
-                        led_duty_cycle: if led_total > 0 {
-                            led_on_count as f32 / led_total as f32
-                        } else if (current_cpu.get_led_value() & 1) == 1 { 1.0 } else { 0.0 },
+                        led_duty_cycle: {
+                            let total_instr = current_cpu.get_instruction_count() as u64;
+                            if total_instr > 0 { next_led_on as f32 / total_instr as f32 } else { 0.0 }
+                        },
+                        led_on_count: next_led_on,
                         instruction_count: current_cpu.get_instruction_count(),
                         memory_low,
                         memory_io_led,
@@ -673,12 +677,12 @@ pub fn app() -> Html {
                         let state = state.clone();
                         let asm_lines = asm_lines.clone();
                         gloo::timers::callback::Timeout::new(30, move || {
-                            run_step(current_cpu, cpu_handle, running, state, asm_lines, next_prev_regs, next_prev_prev_regs, next_prev_mem_low, next_prev_mem_io_led, next_prev_mem_io_uart, next_prev_mem_stack, next_prev_prev_mem_low, next_prev_prev_mem_io_led, next_prev_prev_mem_io_uart, next_prev_prev_mem_stack, steps + 10, stop_flag, switch_state);
+                            run_step(current_cpu, cpu_handle, running, state, asm_lines, next_prev_regs, next_prev_prev_regs, next_prev_mem_low, next_prev_mem_io_led, next_prev_mem_io_uart, next_prev_mem_stack, next_prev_prev_mem_low, next_prev_prev_mem_io_led, next_prev_prev_mem_io_uart, next_prev_prev_mem_stack, steps + 500, stop_flag, switch_state, next_led_on);
                         }).forget();
                     }
                 }
 
-                run_step(initial_cpu, cpu_handle, running, state, asm_lines, prev_regs, prev_prev_regs, prev_mem_low, prev_mem_io_led, prev_mem_io_uart, prev_mem_stack, prev_prev_mem_low, prev_prev_mem_io_led, prev_prev_mem_io_uart, prev_prev_mem_stack, 0, stop_flag, switch_state);
+                run_step(initial_cpu, cpu_handle, running, state, asm_lines, prev_regs, prev_prev_regs, prev_mem_low, prev_mem_io_led, prev_mem_io_uart, prev_mem_stack, prev_prev_mem_low, prev_prev_mem_io_led, prev_prev_mem_io_uart, prev_prev_mem_stack, 0, stop_flag, switch_state, 0);
             }).forget();
         })
     };
@@ -755,6 +759,7 @@ pub fn app() -> Html {
                         is_halted: new_cpu.is_halted(),
                         led_value: new_cpu.get_led_value(),
                     led_duty_cycle: if (new_cpu.get_led_value() & 1) == 1 { 1.0 } else { 0.0 },
+                    led_on_count: 0,
                         instruction_count: new_cpu.get_instruction_count(),
                         memory_low: memory_low.clone(),
                         memory_io_led: memory_io_led.clone(),
@@ -1414,6 +1419,7 @@ fn capture_cpu_state(cpu: &WasmCpu, prev: &EmulatorState) -> EmulatorState {
         is_halted: cpu.is_halted(),
         led_value: cpu.get_led_value(),
         led_duty_cycle: if (cpu.get_led_value() & 1) == 1 { 1.0 } else { 0.0 },
+        led_on_count: 0,
         instruction_count: cpu.get_instruction_count(),
         memory_low: memory_low.clone(),
         memory_io_led: memory_io_led.clone(),

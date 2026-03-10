@@ -75,10 +75,10 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
         ("READY", "emu-state emu-ready")
     };
 
-    // LED and switch — use duty cycle for dimming during Run
+    // LED and switch — duty cycle percentage when running, ON/OFF when paused
     let duty = state.led_duty_cycle;
     let led_class = if duty > 0.0 { "led led-on led-large" } else { "led led-off led-large" };
-    let led_status = if duty > 0.01 && duty < 0.99 {
+    let led_status = if props.is_running && duty > 0.01 && duty < 0.99 {
         format!("{:.0}%", duty * 100.0)
     } else if duty >= 0.99 {
         "ON".to_string()
