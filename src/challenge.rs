@@ -72,183 +72,26 @@ pub fn get_challenges() -> Vec<Challenge> {
 pub fn get_examples() -> Vec<(String, String, String)> {
     vec![
         (
-            "Basic Arithmetic".to_string(),
-            "Load values and perform arithmetic operations.".to_string(),
-            r#"; Example 1: Basic Arithmetic
-; Load constants and add them
+            "Add".to_string(),
+            "Compute 100 + 200 + 42 = 342, return in r0".to_string(),
+            r#"; Add: Compute 100 + 200 + 42 = 342
+; Result in r0
 
-        lc      r0,10       ; r0 = 10
-        lc      r1,20       ; r1 = 20
-        add     r0,r1       ; r0 = r0 + r1 = 30
-
-        lc      r2,5        ; r2 = 5
-        add     r0,r2       ; r0 = 35
-
-halt:   bra     halt        ; Stop execution
-"#
-            .to_string(),
-        ),
-        (
-            "Compare and Branch".to_string(),
-            "Compare values and branch based on results.".to_string(),
-            r#"; Example 2: Compare and Branch
-; Compare two values and branch if less than
-
-        lc      r0,5        ; r0 = 5
-        lc      r1,10       ; r1 = 10
-
-        cls     r0,r1       ; C = (r0 < r1) = true
-        brt     less        ; Branch if true
-
-        lc      r2,0        ; Not taken
-        bra     done
-
-less:   lc      r2,1        ; r2 = 1 (5 < 10)
-
-done:   bra     done
-"#
-            .to_string(),
-        ),
-        (
-            "Stack Frame".to_string(),
-            "Set up a stack frame like a C function.".to_string(),
-            r#"; Example 3: Stack Frame
-; Simulate a C function prologue/epilogue
-
-        ; Function entry
-        push    fp          ; Save frame pointer
-        push    r2          ; Save callee-saved reg
-        push    r1          ; Save return address
-        mov     fp,sp       ; Set up frame pointer
-
-        ; Function body
-        lc      r0,42       ; Return value
-
-        ; Function exit
-        mov     sp,fp       ; Restore stack
-        pop     r1          ; Restore r1
-        pop     r2          ; Restore r2
-        pop     fp          ; Restore fp
-
-halt:   bra     halt        ; (would be jmp (r1))
-"#
-            .to_string(),
-        ),
-        (
-            "Loop Counter".to_string(),
-            "Count from 0 to 5 using a loop.".to_string(),
-            r#"; Example 4: Loop Counter
-; Count from 0 to 5
-
-        lc      r0,0        ; r0 = counter = 0
-        lc      r1,5        ; r1 = limit = 5
-
-loop:   add     r0,1        ; counter++
-        cls     r0,r1       ; C = (counter < limit)
-        brt     loop        ; Continue if less
-
-        ; r0 = 5 when done
-halt:   bra     halt
-"#
-            .to_string(),
-        ),
-        (
-            "Memory Access".to_string(),
-            "Store and load values from memory.".to_string(),
-            r#"; Example 5: Memory Access
-; Store values to memory and read them back
-
-        lc      r0,100      ; Value to store
-        la      r1,0x1000   ; Load 24-bit address (la, not lc!)
-
-        ; Store byte
-        sb      r0,0(r1)    ; mem[0x1000] = 100
-
-        ; Load it back
-        lb      r2,0(r1)    ; r2 = mem[0x1000]
-
-        ; r2 should be 100
-halt:   bra     halt
-"#
-            .to_string(),
-        ),
-        (
-            "Condition Flag".to_string(),
-            "COR24's unique mov ra,c to capture comparison result.".to_string(),
-            r#"; Example 6: Condition Flag
-; COR24 can move the C flag directly to a register
-; This is useful for branchless comparisons
-
-        lc      r0,5        ; r0 = 5
-        lc      r1,10       ; r1 = 10
-
-        cls     r0,r1       ; C = (5 < 10) = 1
-        mov     r2,c        ; r2 = C = 1 (no branch needed!)
-
-        lc      r0,20       ; r0 = 20
-        cls     r0,r1       ; C = (20 < 10) = 0
-        mov     r0,c        ; r0 = C = 0
+        lc      r0,100      ; r0 = 100
+        lcu     r1,200      ; r1 = 200 (unsigned, >127)
+        add     r0,r1       ; r0 = 300
+        lc      r1,42       ; r1 = 42
+        add     r0,r1       ; r0 = 342 (0x156)
 
 halt:   bra     halt
 "#
             .to_string(),
         ),
         (
-            "Sign Extension".to_string(),
-            "Demonstrate sxt/zxt for byte-to-word conversion.".to_string(),
-            r#"; Example 7: Sign Extension
-; COR24 is 24-bit but loads 8-bit values
-; sxt/zxt extend bytes to full 24-bit words
-
-        lc      r0,127      ; r0 = 0x00007F (positive)
-        lc      r1,-1       ; r1 = 0xFFFFFF (sign extended)
-
-        lcu     r2,255      ; r2 = 0x0000FF (unsigned)
-
-        ; Store byte and reload with different extension
-        la      r0,0x100
-        lc      r1,0x80     ; -128 signed, 128 unsigned
-        sb      r1,0(r0)    ; Store byte
-
-        lb      r1,0(r0)    ; r1 = 0xFFFF80 (sign extended)
-        lbu     r2,0(r0)    ; r2 = 0x000080 (zero extended)
-
-halt:   bra     halt
-"#
-            .to_string(),
-        ),
-        (
-            "24-bit Arithmetic".to_string(),
-            "Working with COR24's 24-bit word size.".to_string(),
-            r#"; Example 8: 24-bit Arithmetic
-; COR24 uses 24-bit (3-byte) words
-; Max unsigned: 0xFFFFFF = 16,777,215
-; Max signed: 0x7FFFFF = 8,388,607
-
-        la      r0,0x7FFFFF ; Max positive signed
-        lc      r1,1
-        add     r0,r1       ; Overflow to 0x800000 (negative)
-
-        la      r0,0xFFFFFF ; Max unsigned
-        add     r0,r1       ; Wraps to 0x000000
-
-        ; 24-bit multiplication
-        la      r0,0x100    ; 256
-        lc      r1,16
-        mul     r0,r1       ; r0 = 4096 (0x1000)
-
-halt:   bra     halt
-"#
-            .to_string(),
-        ),
-        (
-            "LED Blink".to_string(),
-            "Memory-mapped I/O: Control LEDs at address 0xFF0000.".to_string(),
-            r#"; Example 9: LED Blink
-; COR24 uses memory-mapped I/O
+            "Blink LED".to_string(),
+            "Toggle LED with delay loop".to_string(),
+            r#"; Blink LED: Toggle LED D2 on and off
 ; LED D2 at 0xFF0000 (write bit 0)
-;
-; Blinks LED on and off with nested delay.
 ; Click Run to watch the LED blink!
 
         la      r1,0xFF0000
@@ -295,9 +138,9 @@ halt:   bra     halt
             .to_string(),
         ),
         (
-            "Button Echo (blinky)".to_string(),
-            "LED D2 follows button S2 - matches COR24-TB hardware demo.".to_string(),
-            r#"; Example 10: Button Echo
+            "Button Echo".to_string(),
+            "LED D2 follows button S2".to_string(),
+            r#"; Button Echo: LED follows button state
 ; LED D2 lights when button S2 is pressed
 ; Click S2 button in I/O panel while running
 ;
@@ -315,6 +158,210 @@ loop:
         bra     loop        ; Keep polling
 
 halt:   bra     halt        ; Never reached
+"#
+            .to_string(),
+        ),
+        (
+            "Countdown".to_string(),
+            "Count 10→0 on LED, then halt".to_string(),
+            r#"; Countdown: Display 10 down to 0 on LED
+; Writes count to LED register, delays, decrements
+
+        la      r1,0xFF0000 ; LED address
+        lc      r0,10       ; Start at 10
+
+loop:   sb      r0,0(r1)    ; Write count to LED
+
+        ; Delay loop
+        push    r0
+        lc      r2,0
+wait:   add     r2,1
+        lc      r0,127
+        clu     r2,r0
+        brt     wait
+        pop     r0
+
+        sub     r0,1        ; count--
+        ceq     r0,z        ; count == 0?
+        brf     loop        ; Continue if not zero
+
+        ; Clear LED and halt
+        lc      r0,0
+        sb      r0,0(r1)
+halt:   bra     halt
+"#
+            .to_string(),
+        ),
+        (
+            "Fibonacci".to_string(),
+            "Compute fib(10) = 55, display on LED".to_string(),
+            r#"; Fibonacci: Compute fib(10) = 55
+; Iterative: a=0, b=1, repeat 9 times: tmp=a+b, a=b, b=tmp
+; Result (55) displayed on LED
+
+        lc      r0,0            ; a = 0
+        lc      r1,1            ; b = 1
+        lc      r2,9            ; 9 iterations for fib(10)
+
+loop:   push    r1              ; save old b
+        add     r1,r0           ; b = a + b (new fib value)
+        pop     r0              ; a = old b
+        sub     r2,1            ; counter--
+        ceq     r2,z
+        brf     loop            ; continue if counter != 0
+
+        ; r1 = fib(10) = 55, display on LED
+        la      r0,0xFF0000
+        sb      r1,0(r0)
+
+halt:   bra     halt
+"#
+            .to_string(),
+        ),
+        (
+            "Memory Access".to_string(),
+            "Store and load values from memory".to_string(),
+            r#"; Memory Access: Store and load values
+; Store values to memory and read them back
+
+        lc      r0,100      ; Value to store
+        la      r1,0x0080   ; Address just past program area
+
+        ; Store byte
+        sb      r0,0(r1)    ; mem[0x0080] = 100
+
+        ; Store word (3 bytes)
+        sw      r0,4(r1)    ; mem[0x0084..87] = 100
+
+        ; Load them back
+        lb      r2,0(r1)    ; r2 = mem[0x0080] = 100
+        lw      r2,4(r1)    ; r2 = mem[0x0084] = 100
+
+halt:   bra     halt
+"#
+            .to_string(),
+        ),
+        (
+            "Nested Calls".to_string(),
+            "Function call chain showing stack frames".to_string(),
+            r#"; Nested Calls: 3-level function call chain
+; main -> level_a -> level_b, showing stack frames
+; Result: r0 = ((5 + 10) * 2) + 3 = 33
+
+        ; --- main ---
+        lc      r0,5            ; arg = 5
+        la      r1,ret_a        ; return address
+        la      r2,level_a
+        jal     r1,(r2)         ; call level_a(5)
+ret_a:
+halt:   bra     halt            ; r0 = 33
+
+        ; --- level_a(x): returns level_b(x + 10) ---
+level_a:
+        push    fp
+        push    r1              ; save return addr
+        mov     fp,sp
+        add     r0,10           ; x + 10 = 15
+        la      r1,ret_b
+        la      r2,level_b
+        jal     r1,(r2)         ; call level_b(15)
+ret_b:  mov     sp,fp
+        pop     r1              ; restore return addr
+        pop     fp
+        jmp     (r1)            ; return
+
+        ; --- level_b(x): returns x * 2 + 3 ---
+level_b:
+        push    fp
+        push    r1              ; save return addr
+        mov     fp,sp
+        add     r0,r0           ; x * 2 = 30
+        add     r0,3            ; + 3 = 33
+        mov     sp,fp
+        pop     r1
+        pop     fp
+        jmp     (r1)            ; return
+"#
+            .to_string(),
+        ),
+        (
+            "Stack Variables".to_string(),
+            "Local variables and register spilling".to_string(),
+            r#"; Stack Variables: Local vars on the stack
+; Demonstrates frame pointer, local storage, and
+; register save/restore (spilling)
+;
+; Computes: a=seed+1, b=a+seed, c=b+a, result=a^b^c
+; with seed=7: a=8, b=15, c=23, result=8^15^23=16
+
+        lc      r0,7            ; seed = 7
+        la      r1,ret_main
+        la      r2,compute
+        jal     r1,(r2)         ; call compute(7)
+ret_main:
+        ; r0 = result (16 = 0x10)
+        la      r1,0xFF0000
+        sb      r0,0(r1)        ; Display on LED
+halt:   bra     halt
+
+        ; --- compute(seed in r0): local vars on stack ---
+compute:
+        push    fp
+        push    r1              ; save return addr
+        mov     fp,sp
+        sub     sp,9            ; 3 local words (a, b, c)
+
+        ; a = seed + 1
+        mov     r1,r0           ; r1 = seed
+        add     r0,1            ; r0 = seed + 1 = a
+        sw      r0,0(sp)        ; local[0] = a
+
+        ; b = a + seed
+        add     r0,r1           ; r0 = a + seed = b
+        sw      r0,3(sp)        ; local[1] = b
+
+        ; c = b + a
+        lw      r1,0(sp)        ; r1 = a
+        add     r0,r1           ; r0 = b + a = c
+        sw      r0,6(sp)        ; local[2] = c
+
+        ; result = a ^ b ^ c
+        lw      r0,0(sp)        ; a
+        lw      r1,3(sp)        ; b
+        xor     r0,r1           ; a ^ b
+        lw      r1,6(sp)        ; c
+        xor     r0,r1           ; a ^ b ^ c
+
+        mov     sp,fp
+        pop     r1
+        pop     fp
+        jmp     (r1)            ; return result in r0
+"#
+            .to_string(),
+        ),
+        (
+            "UART Hello".to_string(),
+            "Write \"Hello\\n\" to UART output".to_string(),
+            r#"; UART Hello: Send "Hello\n" via UART
+; UART data register at 0xFF0100
+; Write one byte at a time
+
+        la      r1,0xFF0100     ; UART data address
+
+        lc      r0,72           ; 'H'
+        sb      r0,0(r1)
+        lc      r0,101          ; 'e'
+        sb      r0,0(r1)
+        lc      r0,108          ; 'l'
+        sb      r0,0(r1)
+        lc      r0,108          ; 'l'
+        sb      r0,0(r1)
+        lc      r0,111          ; 'o'
+        sb      r0,0(r1)
+        lc      r0,10           ; '\n'
+        sb      r0,0(r1)
+
+halt:   bra     halt
 "#
             .to_string(),
         ),

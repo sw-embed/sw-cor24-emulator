@@ -54,12 +54,19 @@ impl WasmCpu {
 
         if result.errors.is_empty() {
             self.emu.hard_reset();
-            // Load bytes at their correct addresses
+            // Load bytes at their correct addresses, tracking program extent
+            let mut highest_addr: u32 = 0;
             for line in &result.lines {
                 for (i, &b) in line.bytes.iter().enumerate() {
-                    self.emu.write_byte(line.address + i as u32, b);
+                    let addr = line.address + i as u32;
+                    self.emu.write_byte(addr, b);
+                    if addr + 1 > highest_addr {
+                        highest_addr = addr + 1;
+                    }
                 }
             }
+            // Use load_program with empty slice to set program_end correctly
+            self.emu.load_program_extent(highest_addr);
 
             console::log_1(&JsValue::from_str(&format!(
                 "Loaded {} bytes into memory",

@@ -4,6 +4,8 @@
 use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
+use crate::DebugPanel;
+
 /// Pre-built example for the Rust pipeline demo
 #[derive(Clone, PartialEq)]
 pub struct RustExample {
@@ -16,7 +18,7 @@ pub struct RustExample {
 
 /// CPU state for display in the Rust pipeline execution panel
 #[derive(Clone, PartialEq, Default)]
-pub struct RustCpuState {
+pub struct EmulatorState {
     pub registers: [u32; 8],
     pub prev_registers: [u32; 8],      // Changed last step (hot)
     pub prev_prev_registers: [u32; 8], // Changed 2 steps ago (warm)
@@ -26,15 +28,18 @@ pub struct RustCpuState {
     pub led_value: u8,
     pub instruction_count: u32,
     pub memory_low: Vec<u8>,
-    pub memory_high: Vec<u8>,
+    pub memory_io_led: Vec<u8>,         // I/O: LED/Switch at 0xFF0000 (32 bytes)
+    pub memory_io_uart: Vec<u8>,        // I/O: UART at 0xFF0100 (16 bytes)
     pub memory_stack: Vec<u8>,          // Stack region around SP
     pub stack_base_addr: u32,           // Base address of stack region
     pub program_end: u32,               // End of code+data region
-    pub prev_memory_low: Vec<u8>,      // Changed last step (hot)
-    pub prev_memory_high: Vec<u8>,
+    pub prev_memory_low: Vec<u8>,
+    pub prev_memory_io_led: Vec<u8>,
+    pub prev_memory_io_uart: Vec<u8>,
     pub prev_memory_stack: Vec<u8>,
-    pub prev_prev_memory_low: Vec<u8>, // Changed 2 steps ago (warm)
-    pub prev_prev_memory_high: Vec<u8>,
+    pub prev_prev_memory_low: Vec<u8>,
+    pub prev_prev_memory_io_led: Vec<u8>,
+    pub prev_prev_memory_io_uart: Vec<u8>,
     pub prev_prev_memory_stack: Vec<u8>,
     pub current_instruction: String,
     pub assembled_lines: Vec<String>,
@@ -99,7 +104,7 @@ pub struct RustPipelineProps {
     pub on_reset: Callback<()>,
     #[prop_or_default]
     pub on_unload: Callback<()>,
-    pub cpu_state: RustCpuState,
+    pub cpu_state: EmulatorState,
     pub is_loaded: bool,
     pub is_running: bool,
     pub switch_value: u8,
@@ -125,44 +130,6 @@ pub fn rust_pipeline(props: &RustPipelineProps) -> Html {
 
     // Selected example state - None means "Choose an example..." is shown
     let selected_example = use_state(|| None::<RustExample>);
-
-    // Track PC for auto-scroll
-    let last_pc = use_state(|| 0u32);
-
-    // Auto-scroll current assembly line into view when PC changes
-    // Only scrolls within the listing container, not the whole page
-    {
-        let pc = props.cpu_state.pc;
-        let last_pc = last_pc.clone();
-        use_effect_with(pc, move |&current_pc| {
-            if current_pc != *last_pc {
-                last_pc.set(current_pc);
-                // Scroll within the listing container only
-                if let Some(window) = web_sys::window()
-                    && let Some(document) = window.document()
-                    && let Some(container) = document.get_element_by_id("asm-listing-scroll")
-                    && let Some(element) = document.query_selector(".asm-line.current-line").ok().flatten()
-                {
-                    let element_html: &web_sys::HtmlElement = element.unchecked_ref();
-                    let container_html: &web_sys::HtmlElement = container.unchecked_ref();
-                    let element_top = element_html.offset_top();
-                    let container_height = container_html.client_height();
-                    let container_scroll = container.scroll_top();
-
-                    // Only scroll if element is outside visible area
-                    let element_bottom = element_top + 20; // approx line height
-                    let visible_top = container_scroll;
-                    let visible_bottom = container_scroll + container_height;
-
-                    if element_top < visible_top || element_bottom > visible_bottom {
-                        // Center the element in the container
-                        let target_scroll = element_top - (container_height / 2);
-                        container.set_scroll_top(target_scroll.max(0));
-                    }
-                }
-            }
-        });
-    }
 
     // Example selector callback
     let on_example_select = {
@@ -286,72 +253,6 @@ pub fn rust_pipeline(props: &RustPipelineProps) -> Html {
         })
     };
 
-    // Execution callbacks
-    // Step count selector state
-    let step_count = use_state(|| 1u32);
-
-    let on_exec_step = {
-        let on_step = props.on_step.clone();
-        let step_count = step_count.clone();
-        Callback::from(move |_: MouseEvent| on_step.emit(*step_count))
-    };
-
-    let on_step_count_change = {
-        let step_count = step_count.clone();
-        Callback::from(move |e: Event| {
-            if let Some(select) = e.target_dyn_into::<web_sys::HtmlSelectElement>()
-                && let Ok(n) = select.value().parse::<u32>()
-            {
-                step_count.set(n);
-            }
-        })
-    };
-
-    let on_run_click = {
-        let on_run = props.on_run.clone();
-        Callback::from(move |_| on_run.emit(()))
-    };
-
-    let on_stop_click = {
-        let on_stop = props.on_stop.clone();
-        Callback::from(move |_| on_stop.emit(()))
-    };
-
-    let on_reset_click = {
-        let on_reset = props.on_reset.clone();
-        Callback::from(move |_| on_reset.emit(()))
-    };
-
-    let state = &props.cpu_state;
-
-    // Compute emulator state label and CSS class
-    let (emu_state_label, emu_state_class) = if state.is_halted {
-        ("HALTED", "emu-state emu-halted")
-    } else if props.is_running {
-        ("RUNNING", "emu-state emu-running")
-    } else if state.instruction_count > 0 {
-        ("PAUSED", "emu-state emu-paused")
-    } else {
-        ("READY", "emu-state emu-ready")
-    };
-
-    // Compute LED and switch values outside html! macro for cleaner parsing
-    let led_on = (state.led_value & 1) == 1;
-    let led_class = if led_on { "led led-on led-large" } else { "led led-off led-large" };
-    let led_status = if led_on { "ON" } else { "OFF" };
-    let switch_on = (props.switch_value & 1) == 1;
-    let switch_class = if switch_on { "switch switch-on switch-large" } else { "switch switch-off switch-large" };
-    let switch_status = if switch_on { "PRESSED" } else { "RELEASED" };
-
-    // Switch toggle callback
-    let on_switch_click = {
-        let on_switch_toggle = props.on_switch_toggle.clone();
-        let current_value = props.switch_value;
-        Callback::from(move |_: MouseEvent| {
-            on_switch_toggle.emit(current_value ^ 1);
-        })
-    };
-
     // All wizard steps for rendering
     let all_steps = [
         WizardStep::Source,
@@ -383,25 +284,7 @@ pub fn rust_pipeline(props: &RustPipelineProps) -> Html {
                     }>{"Help"}</button>
                 </div>
 
-                // LED D2 and Button S2 (matches COR24-TB hardware)
-                <div class="wizard-peripherals">
-                    <div class="peripheral-section">
-                        <div class="peripheral-label">{"LED D2"}</div>
-                        <div class="led-row-vertical">
-                            <div class={led_class}>{"D2"}</div>
-                        </div>
-                        <div class="led-hex">{led_status}</div>
-                    </div>
-                    <div class="peripheral-section">
-                        <div class="peripheral-label">{"Button S2"}</div>
-                        <div class="switch-row-vertical">
-                            <div class={switch_class} onclick={on_switch_click} title="Click to toggle button S2">
-                                {"S2"}
-                            </div>
-                        </div>
-                        <div class="switch-hex">{switch_status}</div>
-                    </div>
-                </div>
+                // LED and Switch are shown in the DebugPanel
             </div>
 
             // Column 2: Wizard steps
@@ -503,137 +386,18 @@ pub fn rust_pipeline(props: &RustPipelineProps) -> Html {
                                 <span>{"Execution"}</span>
                                 <span class="cell-header-example">{&example.name}</span>
                             </div>
-                            <div class="debug-panel">
-                                // Debug controls
-                                <div class="debug-controls">
-                                    <span class="debug-controls-label">{"Emulator:"}</span>
-                                    <button class="step-btn" onclick={on_exec_step}
-                                        disabled={!props.is_loaded || state.is_halted || props.is_running}>
-                                        {"Step"}
-                                    </button>
-                                    <select class="step-count-select" onchange={on_step_count_change}
-                                        disabled={props.is_running}>
-                                        <option value="1" selected={*step_count == 1}>{"×1"}</option>
-                                        <option value="10" selected={*step_count == 10}>{"×10"}</option>
-                                        <option value="100" selected={*step_count == 100}>{"×100"}</option>
-                                        <option value="1000" selected={*step_count == 1000}>{"×1K"}</option>
-                                        <option value="10000" selected={*step_count == 10000}>{"×10K"}</option>
-                                        <option value="100000" selected={*step_count == 100000}>{"×100K"}</option>
-                                    </select>
-                                    if props.is_running {
-                                        <button class="stop-btn" onclick={on_stop_click.clone()}>
-                                            {"Stop"}
-                                        </button>
-                                    } else {
-                                        <button class="run-btn" onclick={on_run_click.clone()}
-                                            disabled={!props.is_loaded || state.is_halted}>
-                                            {"Run"}
-                                        </button>
-                                    }
-                                    <button class="reset-btn" onclick={on_reset_click.clone()}
-                                        disabled={!props.is_loaded || props.is_running}>
-                                        {"Reset"}
-                                    </button>
-                                </div>
-
-                                // Two-column debug content
-                                <div class="debug-content">
-                                    // Left: Assembly listing
-                                    <div class="debug-left">
-                                        <h4>{"Assembly"}</h4>
-                                        if props.is_loaded && !state.assembled_lines.is_empty() {
-                                            <div class="listing-scroll" id="asm-listing-scroll">
-                                                {for state.assembled_lines.iter().map(|line| {
-                                                    let is_current = if line.len() > 4 && line.chars().nth(4) == Some(':') {
-                                                        if let Ok(addr) = u32::from_str_radix(&line[0..4], 16) {
-                                                            addr == state.pc
-                                                        } else {
-                                                            false
-                                                        }
-                                                    } else {
-                                                        false
-                                                    };
-                                                    let class = if is_current { "asm-line current-line" } else { "asm-line" };
-                                                    html! {
-                                                        <div class={class}>{line}</div>
-                                                    }
-                                                })}
-                                            </div>
-                                        }
-                                    </div>
-
-                                    // Right: Registers and state
-                                    <div class="debug-right">
-                                        <h4>{"Registers"}</h4>
-                                        <div class="register-grid-compact">
-                                            {for (0..8).map(|i| {
-                                                let (name, tooltip) = match i {
-                                                    0 => ("r0", "General purpose register 0"),
-                                                    1 => ("r1", "General purpose register 1"),
-                                                    2 => ("r2", "General purpose register 2"),
-                                                    3 => ("fp", "Frame pointer (r3)"),
-                                                    4 => ("sp", "Stack pointer (r4)"),
-                                                    5 => ("z",  "Zero register (r5, always 0)"),
-                                                    6 => ("iv", "Interrupt vector (r6)"),
-                                                    7 => ("ir", "Interrupt return (r7)"),
-                                                    _ => ("??", ""),
-                                                };
-                                                let val = state.registers[i];
-                                                let is_hot = val != state.prev_registers[i];
-                                                let is_warm = !is_hot && state.prev_registers[i] != state.prev_prev_registers[i];
-                                                let row_class = if is_hot {
-                                                    "register-row-compact hot"
-                                                } else if is_warm {
-                                                    "register-row-compact warm"
-                                                } else {
-                                                    "register-row-compact"
-                                                };
-                                                html! {
-                                                    <div class={row_class}>
-                                                        <span class="reg-name">{name}<span class="reg-tip" title={tooltip}>{"?"}</span></span>
-                                                        <span class="reg-value">{format!("0x{:06X}", val)}</span>
-                                                    </div>
-                                                }
-                                            })}
-                                            <div class="register-row-compact">
-                                                <span class="reg-name">{"PC"}<span class="reg-tip" title="Program counter">{"?"}</span></span>
-                                                <span class="reg-value">{format!("0x{:06X}", state.pc)}</span>
-                                            </div>
-                                            <div class="register-row-compact">
-                                                <span class="reg-name">{"C"}<span class="reg-tip" title="Condition flag (set by compare instructions)">{"?"}</span></span>
-                                                <span class="reg-value">{if state.condition_flag { "1" } else { "0" }}</span>
-                                            </div>
-                                        </div>
-
-                                        <div class="emu-status-line">
-                                            <span class={emu_state_class}>{emu_state_label}</span>
-                                            <span class="instruction-count">{"Instructions: "}{state.instruction_count}</span>
-                                        </div>
-
-                                        // Memory viewer - three regions
-                                        if props.is_loaded {
-                                            <div class="memory-section">
-                                                <h4>{format!("Program (0x000000 \u{2192} 0x{:06X})", state.program_end)}</h4>
-                                                <div class="memory-dump-compact">{
-                                                    format_memory_dump_heatmap(&state.memory_low, &state.prev_memory_low, &state.prev_prev_memory_low, 0x000000)
-                                                }</div>
-                                            </div>
-                                            <div class="memory-section">
-                                                <h4>{format!("Stack (0xFEEC00 \u{2193} SP=0x{:06X})", state.registers[4])}</h4>
-                                                <div class="memory-dump-compact">{
-                                                    format_memory_dump_reversed_heatmap(&state.memory_stack, &state.prev_memory_stack, &state.prev_prev_memory_stack, state.stack_base_addr)
-                                                }</div>
-                                            </div>
-                                            <div class="memory-section">
-                                                <h4>{"I/O (0xFFFF80 \u{2192})"}</h4>
-                                                <div class="memory-dump-compact">{
-                                                    format_memory_dump_reversed_heatmap(&state.memory_high, &state.prev_memory_high, &state.prev_prev_memory_high, 0xFFFF80)
-                                                }</div>
-                                            </div>
-                                        }
-                                    </div>
-                                </div>
-                            </div>
+                            <DebugPanel
+                                cpu_state={props.cpu_state.clone()}
+                                is_loaded={props.is_loaded}
+                                is_running={props.is_running}
+                                on_step={props.on_step.clone()}
+                                on_run={props.on_run.clone()}
+                                on_stop={props.on_stop.clone()}
+                                on_reset={props.on_reset.clone()}
+                                switch_value={props.switch_value}
+                                on_switch_toggle={props.on_switch_toggle.clone()}
+                                listing_scroll_id={"asm-listing-scroll".to_string()}
+                            />
                         </div>
                     }
                 } else {
@@ -684,72 +448,5 @@ pub fn rust_pipeline(props: &RustPipelineProps) -> Html {
                 </div>
             }
         </div>
-    }
-}
-
-/// Format memory as hex dump with heat map highlighting (returns Html)
-fn format_memory_dump_heatmap(data: &[u8], prev: &[u8], prev_prev: &[u8], base_addr: u32) -> Html {
-    html! {
-        <>
-            {for data.chunks(16).enumerate().map(|(i, chunk)| {
-                let addr = base_addr + (i * 16) as u32;
-                html! {
-                    <div class="memory-row">
-                        <span class="memory-addr">{format!("{:06X}: ", addr)}</span>
-                        {for chunk.iter().enumerate().map(|(j, byte)| {
-                            let idx = i * 16 + j;
-                            let prev_byte = prev.get(idx).copied().unwrap_or(0);
-                            let prev_prev_byte = prev_prev.get(idx).copied().unwrap_or(0);
-                            let is_hot = *byte != prev_byte;
-                            let is_warm = !is_hot && prev_byte != prev_prev_byte;
-                            let class = if is_hot {
-                                "mem-byte hot"
-                            } else if is_warm {
-                                "mem-byte warm"
-                            } else {
-                                "mem-byte"
-                            };
-                            html! {
-                                <span class={class}>{format!("{:02X}", byte)}</span>
-                            }
-                        })}
-                    </div>
-                }
-            })}
-        </>
-    }
-}
-
-/// Format memory as hex dump in reverse order with heat map highlighting (returns Html)
-fn format_memory_dump_reversed_heatmap(data: &[u8], prev: &[u8], prev_prev: &[u8], base_addr: u32) -> Html {
-    let chunks: Vec<_> = data.chunks(16).collect();
-    html! {
-        <>
-            {for chunks.iter().enumerate().rev().map(|(i, chunk)| {
-                let addr = base_addr + (i * 16) as u32;
-                html! {
-                    <div class="memory-row">
-                        <span class="memory-addr">{format!("{:06X}: ", addr)}</span>
-                        {for chunk.iter().enumerate().map(|(j, byte)| {
-                            let idx = i * 16 + j;
-                            let prev_byte = prev.get(idx).copied().unwrap_or(0);
-                            let prev_prev_byte = prev_prev.get(idx).copied().unwrap_or(0);
-                            let is_hot = *byte != prev_byte;
-                            let is_warm = !is_hot && prev_byte != prev_prev_byte;
-                            let class = if is_hot {
-                                "mem-byte hot"
-                            } else if is_warm {
-                                "mem-byte warm"
-                            } else {
-                                "mem-byte"
-                            };
-                            html! {
-                                <span class={class}>{format!("{:02X}", byte)}</span>
-                            }
-                        })}
-                    </div>
-                }
-            })}
-        </>
     }
 }

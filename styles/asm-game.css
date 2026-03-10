@@ -743,6 +743,18 @@ table td {
     overflow-y: auto;
 }
 
+.asm-debug-section {
+    background: #111122;
+    padding: 8px;
+    border-radius: 4px;
+}
+
+.asm-debug-section h4 {
+    color: #c792ea;
+    font-size: 0.85em;
+    margin-bottom: 6px;
+}
+
 /* I/O Panel (LEDs and Switches) */
 .io-panel {
     background: #16213e;
@@ -1697,6 +1709,10 @@ header h1 {
     padding: 12px;
 }
 
+.debug-content.debug-content-single {
+    grid-template-columns: 1fr;
+}
+
 .debug-left, .debug-right {
     display: flex;
     flex-direction: column;
@@ -1735,7 +1751,7 @@ header h1 {
     min-height: 780px;
 }
 
-.debug-right .register-grid-compact {
+.register-grid {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     gap: 4px;
@@ -1744,7 +1760,7 @@ header h1 {
     border-radius: 3px;
 }
 
-.register-row-compact {
+.register-entry {
     display: flex;
     justify-content: space-between;
     padding: 3px 6px;
@@ -1752,47 +1768,49 @@ header h1 {
     border-radius: 2px;
 }
 
-.register-row-compact .reg-name {
+.register-entry .reg-name {
     color: #c792ea;
     font-weight: bold;
     font-size: 0.9em;
 }
 
-.register-row-compact .reg-value {
+.register-entry .reg-value {
     color: #a5d6a7;
     font-family: 'Monaco', monospace;
     font-size: 0.9em;
 }
 
 /* Heat map: hot (just changed) = red, warm (changed last step) = blue */
-.register-row-compact.hot {
+.register-entry.hot {
     background: rgba(255, 80, 80, 0.5);
     border-left: 3px solid #ff4444;
 }
 
-.register-row-compact.hot .reg-value {
+.register-entry.hot .reg-value {
     color: #ff8888;
     font-weight: bold;
 }
 
-.register-row-compact.warm {
+.register-entry.warm {
     background: rgba(100, 149, 237, 0.3);
     border-left: 3px solid #6495ed;
 }
 
-.register-row-compact.warm .reg-value {
+.register-entry.warm .reg-value {
     color: #87ceeb;
 }
 
 .reg-tip {
-    font-size: 0.7em;
-    color: #777;
-    margin-left: 3px;
+    font-size: 0.75em;
+    color: #999;
+    margin-left: 4px;
     vertical-align: super;
     cursor: help;
-    border: 1px solid #555;
+    border: 1px solid #666;
     border-radius: 50%;
-    padding: 0 3px;
+    padding: 1px 4px;
+    display: inline-block;
+    line-height: 1;
 }
 
 .emu-status-line {
@@ -1808,6 +1826,28 @@ header h1 {
 
 .emu-status-line .instruction-count {
     color: #888;
+}
+
+.debug-io {
+    margin-top: 8px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    padding: 6px 8px;
+    background: #12101f;
+    border-radius: 3px;
+}
+
+.peripheral-section-inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.io-inline-status {
+    font-size: 0.8em;
+    color: #aaa;
+    font-family: 'Monaco', monospace;
 }
 
 .memory-section {
@@ -1835,6 +1875,11 @@ header h1 {
 .memory-dump-compact .memory-row {
     white-space: nowrap;
     line-height: 1.4;
+}
+
+.memory-zero-block {
+    opacity: 0.4;
+    font-style: italic;
 }
 
 .memory-dump-compact .memory-addr {

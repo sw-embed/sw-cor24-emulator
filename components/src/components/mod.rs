@@ -1,4 +1,5 @@
 mod collapsible;
+mod debug_panel;
 mod header;
 mod memory_viewer;
 mod modal;
@@ -9,6 +10,7 @@ mod sidebar;
 mod tab_bar;
 
 pub use collapsible::*;
+pub use debug_panel::*;
 pub use header::*;
 pub use memory_viewer::*;
 pub use modal::*;

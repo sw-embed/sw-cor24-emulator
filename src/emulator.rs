@@ -102,6 +102,13 @@ impl EmulatorCore {
         }
     }
 
+    /// Set the program extent (highest address used by program code)
+    pub fn load_program_extent(&mut self, end: u32) {
+        if end > self.program_end {
+            self.program_end = end;
+        }
+    }
+
     /// Reset CPU (preserves memory)
     pub fn reset(&mut self) {
         self.cpu.reset();

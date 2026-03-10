@@ -4,8 +4,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use components::{
-    Header, LegendItem, MemoryViewer, Modal, ProgramArea, Register, RegisterPanel,
-    RustCpuState, RustExample, RustPipeline, Sidebar, SidebarButton, Tab, TabBar,
+    DebugPanel, Header, Modal, ProgramArea,
+    EmulatorState, RustExample, RustPipeline, Sidebar, SidebarButton, Tab, TabBar,
 };
 use yew::prelude::*;
 
@@ -19,7 +19,7 @@ pub fn app() -> Html {
 
     // Rust pipeline state - separate CPU for Rust tab execution
     let rust_cpu = use_state(WasmCpu::new);
-    let rust_cpu_state = use_state(RustCpuState::default);
+    let rust_emu_state = use_state(EmulatorState::default);
     let rust_is_loaded = use_state(|| false);
     let rust_is_running = use_state(|| false);
     let rust_loaded_example = use_state(|| None::<RustExample>);
@@ -34,7 +34,8 @@ pub fn app() -> Html {
     let program_code = use_state(|| String::from(EXAMPLE_PROGRAM));
     let assembly_output = use_state(|| None::<Html>);
     let assembly_lines = use_state(Vec::<String>::new);
-    let last_registers = use_state(|| vec![0u32; 8]);
+    let asm_emu_state = use_state(EmulatorState::default);
+    let asm_switch_value = use_state(|| 0u8);
     let challenge_mode = use_state(|| false);
     let current_challenge_id = use_state(|| None::<usize>);
     let challenge_result = use_state(|| None::<Result<String, String>>);
@@ -134,6 +135,7 @@ pub fn app() -> Html {
         let assembly_lines = assembly_lines.clone();
         let program_code = program_code.clone();
         let asm_assembled = asm_assembled.clone();
+        let asm_emu_state = asm_emu_state.clone();
 
         Callback::from(move |code: String| {
             program_code.set(code.clone());
@@ -145,6 +147,7 @@ pub fn app() -> Html {
                     // Get assembled lines for display
                     let lines = new_cpu.get_assembled_lines();
                     assembly_lines.set(lines);
+                    asm_emu_state.set(capture_cpu_state_initial(&new_cpu));
                     cpu.set(new_cpu);
                     asm_assembled.set(true);
 
@@ -170,26 +173,26 @@ pub fn app() -> Html {
     let on_step = {
         let cpu = cpu.clone();
         let assembly_output = assembly_output.clone();
-        let last_registers = last_registers.clone();
+        let asm_emu_state = asm_emu_state.clone();
 
-        Callback::from(move |()| {
+        Callback::from(move |count: u32| {
             let mut new_cpu = (*cpu).clone();
+            let prev_state = (*asm_emu_state).clone();
 
-            // Save current state for change tracking
-            last_registers.set(new_cpu.get_registers());
-
-            match new_cpu.step() {
-                Ok(_) => {
-                    cpu.set(new_cpu);
-                }
-                Err(e) => {
+            for _ in 0..count {
+                if new_cpu.is_halted() { break; }
+                if let Err(e) = new_cpu.step() {
                     assembly_output.set(Some(html! {
                         <div class="error-text">
                             {format!("Error: {:?}", e)}
                         </div>
                     }));
+                    break;
                 }
             }
+
+            asm_emu_state.set(capture_cpu_state(&new_cpu, &prev_state));
+            cpu.set(new_cpu);
         })
     };
 
@@ -197,6 +200,7 @@ pub fn app() -> Html {
         let cpu = cpu.clone();
         let assembly_output = assembly_output.clone();
         let asm_is_running = asm_is_running.clone();
+        let asm_emu_state = asm_emu_state.clone();
         let stop_flag = asm_stop_requested.borrow().clone();
         let switches = shared_switches.borrow().clone();
 
@@ -211,6 +215,7 @@ pub fn app() -> Html {
             let cpu_handle = cpu.clone();
             let output_handle = assembly_output.clone();
             let running_handle = asm_is_running.clone();
+            let state_handle = asm_emu_state.clone();
             let stop_handle = stop_flag.clone();
             let switch_handle = switches.clone();
             let current_cpu = (*cpu).clone();
@@ -221,11 +226,13 @@ pub fn app() -> Html {
                 cpu_handle: yew::UseStateHandle<WasmCpu>,
                 output_handle: yew::UseStateHandle<Option<Html>>,
                 running_handle: yew::UseStateHandle<bool>,
+                state_handle: yew::UseStateHandle<EmulatorState>,
                 stop_handle: Rc<Cell<bool>>,
                 switch_handle: Rc<Cell<u8>>,
             ) {
                 // Check if stop was requested (immediate - no state delay)
                 if stop_handle.get() {
+                    state_handle.set(capture_cpu_state(&current_cpu, &state_handle));
                     cpu_handle.set(current_cpu);
                     running_handle.set(false);
                     output_handle.set(Some(yew::html! {
@@ -255,8 +262,8 @@ pub fn app() -> Html {
                 }
 
                 // Update CPU state for UI refresh (includes LED state)
-                // Preserve switch state from shared cell
                 current_cpu.set_switches(switch_handle.get());
+                state_handle.set(capture_cpu_state(&current_cpu, &state_handle));
                 cpu_handle.set(current_cpu.clone());
 
                 if halted {
@@ -277,14 +284,14 @@ pub fn app() -> Html {
                 } else {
                     // Continue running - 50ms delay allows browser to process input events
                     gloo::timers::callback::Timeout::new(50, move || {
-                        run_step(current_cpu, cpu_handle, output_handle, running_handle, stop_handle, switch_handle);
+                        run_step(current_cpu, cpu_handle, output_handle, running_handle, state_handle, stop_handle, switch_handle);
                     }).forget();
                 }
             }
 
             // Start the first step
             gloo::timers::callback::Timeout::new(0, move || {
-                run_step(current_cpu, cpu_handle, output_handle, running_handle, stop_handle, switch_handle);
+                run_step(current_cpu, cpu_handle, output_handle, running_handle, state_handle, stop_handle, switch_handle);
             }).forget();
         })
     };
@@ -298,16 +305,26 @@ pub fn app() -> Html {
 
     let on_reset = {
         let cpu = cpu.clone();
-        let assembly_output = assembly_output.clone();
         let assembly_lines = assembly_lines.clone();
-        let asm_assembled = asm_assembled.clone();
+        let asm_emu_state = asm_emu_state.clone();
+        let program_code = program_code.clone();
 
         Callback::from(move |()| {
-            // Full reset - create new CPU with cleared memory
-            cpu.set(WasmCpu::new());
+            // Reset CPU and re-assemble current program so Step/Run stay enabled
+            let mut new_cpu = WasmCpu::new();
+            let code = (*program_code).clone();
+            if !code.is_empty() {
+                if let Ok(_) = new_cpu.assemble(&code) {
+                    assembly_lines.set(new_cpu.get_assembled_lines());
+                    asm_emu_state.set(capture_cpu_state_initial(&new_cpu));
+                    cpu.set(new_cpu);
+                    return;
+                }
+            }
+            // Fallback: no code or assembly failed — full reset
             assembly_lines.set(Vec::new());
-            assembly_output.set(None);
-            asm_assembled.set(false);
+            asm_emu_state.set(EmulatorState::default());
+            cpu.set(new_cpu);
         })
     };
 
@@ -322,7 +339,7 @@ pub fn app() -> Html {
     // Rust pipeline: Load example
     let on_rust_load = {
         let rust_cpu = rust_cpu.clone();
-        let rust_cpu_state = rust_cpu_state.clone();
+        let rust_emu_state = rust_emu_state.clone();
         let rust_is_loaded = rust_is_loaded.clone();
         let rust_loaded_example = rust_loaded_example.clone();
 
@@ -343,10 +360,14 @@ pub fn app() -> Html {
                 for addr in 0x000000..0x000080 {
                     memory_low.push(new_cpu.read_byte(addr));
                 }
-                // Capture high memory (0xFFFF80-0xFFFFFF) - 128 bytes
-                let mut memory_high = Vec::new();
-                for addr in 0xFFFF80..=0xFFFFFF {
-                    memory_high.push(new_cpu.read_byte(addr as u32));
+                // I/O regions: LED/Switch (0xFF0000, 32 bytes) and UART (0xFF0100, 16 bytes)
+                let mut memory_io_led = Vec::with_capacity(32);
+                for addr in 0xFF0000..0xFF0020 {
+                    memory_io_led.push(new_cpu.read_byte(addr));
+                }
+                let mut memory_io_uart = Vec::with_capacity(16);
+                for addr in 0xFF0100..0xFF0110 {
+                    memory_io_uart.push(new_cpu.read_byte(addr));
                 }
                 // Capture stack region (64 bytes around SP)
                 let sp = new_cpu.read_register(4);
@@ -357,7 +378,7 @@ pub fn app() -> Html {
                 let memory_stack = new_cpu.get_memory_slice(aligned_start, stack_size);
                 let program_end = new_cpu.get_program_end();
 
-                rust_cpu_state.set(RustCpuState {
+                rust_emu_state.set(EmulatorState {
                     registers,
                     prev_registers: registers, // No changes on initial load
                     prev_prev_registers: registers,
@@ -367,15 +388,18 @@ pub fn app() -> Html {
                     led_value: new_cpu.get_led_value(),
                     instruction_count: new_cpu.get_instruction_count(),
                     memory_low: memory_low.clone(),
-                    memory_high: memory_high.clone(),
+                    memory_io_led: memory_io_led.clone(),
+                    memory_io_uart: memory_io_uart.clone(),
                     memory_stack: memory_stack.clone(),
                     stack_base_addr: aligned_start,
                     program_end,
                     prev_memory_low: memory_low.clone(),
-                    prev_memory_high: memory_high.clone(),
+                    prev_memory_io_led: memory_io_led.clone(),
+                    prev_memory_io_uart: memory_io_uart.clone(),
                     prev_memory_stack: memory_stack.clone(),
                     prev_prev_memory_low: memory_low,
-                    prev_prev_memory_high: memory_high,
+                    prev_prev_memory_io_led: memory_io_led,
+                    prev_prev_memory_io_uart: memory_io_uart,
                     prev_prev_memory_stack: memory_stack,
                     current_instruction: new_cpu.get_current_instruction(),
                     assembled_lines,
@@ -391,11 +415,11 @@ pub fn app() -> Html {
     // Rust pipeline: Step N instructions
     let on_rust_step = {
         let rust_cpu = rust_cpu.clone();
-        let rust_cpu_state = rust_cpu_state.clone();
+        let rust_emu_state = rust_emu_state.clone();
 
         Callback::from(move |count: u32| {
             let mut new_cpu = (*rust_cpu).clone();
-            let prev_state = (*rust_cpu_state).clone();
+            let prev_state = (*rust_emu_state).clone();
 
             // Execute up to `count` steps, stopping early on halt/error
             for _ in 0..count {
@@ -418,10 +442,14 @@ pub fn app() -> Html {
                 for addr in 0x000000..0x000080 {
                     memory_low.push(new_cpu.read_byte(addr));
                 }
-                // Capture high memory (0xFFFF80-0xFFFFFF) - 128 bytes
-                let mut memory_high = Vec::new();
-                for addr in 0xFFFF80..=0xFFFFFF {
-                    memory_high.push(new_cpu.read_byte(addr as u32));
+                // I/O regions: LED/Switch (0xFF0000, 32 bytes) and UART (0xFF0100, 16 bytes)
+                let mut memory_io_led = Vec::with_capacity(32);
+                for addr in 0xFF0000..0xFF0020 {
+                    memory_io_led.push(new_cpu.read_byte(addr));
+                }
+                let mut memory_io_uart = Vec::with_capacity(16);
+                for addr in 0xFF0100..0xFF0110 {
+                    memory_io_uart.push(new_cpu.read_byte(addr));
                 }
                 // Capture stack region (64 bytes around SP)
                 let sp = new_cpu.read_register(4);
@@ -431,7 +459,7 @@ pub fn app() -> Html {
                 let stack_size = (stack_top - aligned_start).min(256);
                 let memory_stack = new_cpu.get_memory_slice(aligned_start, stack_size);
 
-                rust_cpu_state.set(RustCpuState {
+                rust_emu_state.set(EmulatorState {
                     registers,
                     prev_registers: prev_state.registers,
                     prev_prev_registers: prev_state.prev_registers,
@@ -441,15 +469,18 @@ pub fn app() -> Html {
                     led_value: new_cpu.get_led_value(),
                     instruction_count: new_cpu.get_instruction_count(),
                     memory_low,
-                    memory_high,
+                    memory_io_led,
+                    memory_io_uart,
                     memory_stack,
                     stack_base_addr: aligned_start,
                     program_end: new_cpu.get_program_end(),
                     prev_memory_low: prev_state.memory_low,
-                    prev_memory_high: prev_state.memory_high,
+                    prev_memory_io_led: prev_state.memory_io_led,
+                    prev_memory_io_uart: prev_state.memory_io_uart,
                     prev_memory_stack: prev_state.memory_stack,
                     prev_prev_memory_low: prev_state.prev_memory_low,
-                    prev_prev_memory_high: prev_state.prev_memory_high,
+                    prev_prev_memory_io_led: prev_state.prev_memory_io_led,
+                    prev_prev_memory_io_uart: prev_state.prev_memory_io_uart,
                     prev_prev_memory_stack: prev_state.prev_memory_stack,
                     current_instruction: new_cpu.get_current_instruction(),
                     assembled_lines: prev_state.assembled_lines,
@@ -463,7 +494,7 @@ pub fn app() -> Html {
     let on_rust_run = {
         let rust_cpu = rust_cpu.clone();
         let rust_is_running = rust_is_running.clone();
-        let rust_cpu_state = rust_cpu_state.clone();
+        let rust_emu_state = rust_emu_state.clone();
         let stop_flag = rust_stop_requested.clone();
         let switch_state = rust_shared_switches.clone();
         let switch_value = rust_switch_value.clone();
@@ -476,16 +507,18 @@ pub fn app() -> Html {
             rust_is_running.set(true);
             let cpu_handle = rust_cpu.clone();
             let running = rust_is_running.clone();
-            let state = rust_cpu_state.clone();
+            let state = rust_emu_state.clone();
             let asm_lines = state.assembled_lines.clone();
             let initial_cpu = (*rust_cpu).clone();
             let prev_regs = state.registers;
             let prev_prev_regs = state.prev_registers;
             let prev_mem_low = state.memory_low.clone();
-            let prev_mem_high = state.memory_high.clone();
+            let prev_mem_io_led = state.memory_io_led.clone();
+            let prev_mem_io_uart = state.memory_io_uart.clone();
             let prev_mem_stack = state.memory_stack.clone();
             let prev_prev_mem_low = state.prev_memory_low.clone();
-            let prev_prev_mem_high = state.prev_memory_high.clone();
+            let prev_prev_mem_io_led = state.prev_memory_io_led.clone();
+            let prev_prev_mem_io_uart = state.prev_memory_io_uart.clone();
             let prev_prev_mem_stack = state.prev_memory_stack.clone();
             let stop_flag = Rc::clone(&stop_flag.borrow());
             let switch_state = Rc::clone(&switch_state.borrow());
@@ -497,15 +530,17 @@ pub fn app() -> Html {
                     mut current_cpu: WasmCpu,
                     cpu_handle: yew::UseStateHandle<WasmCpu>,
                     running: yew::UseStateHandle<bool>,
-                    state: yew::UseStateHandle<RustCpuState>,
+                    state: yew::UseStateHandle<EmulatorState>,
                     asm_lines: Vec<String>,
                     prev_regs: [u32; 8],
                     prev_prev_regs: [u32; 8],
                     prev_mem_low: Vec<u8>,
-                    prev_mem_high: Vec<u8>,
+                    prev_mem_io_led: Vec<u8>,
+                    prev_mem_io_uart: Vec<u8>,
                     prev_mem_stack: Vec<u8>,
                     prev_prev_mem_low: Vec<u8>,
-                    prev_prev_mem_high: Vec<u8>,
+                    prev_prev_mem_io_led: Vec<u8>,
+                    prev_prev_mem_io_uart: Vec<u8>,
                     prev_prev_mem_stack: Vec<u8>,
                     steps: u32,
                     stop_flag: Rc<Cell<bool>>,
@@ -545,10 +580,14 @@ pub fn app() -> Html {
                     for addr in 0x000000..0x000080 {
                         memory_low.push(current_cpu.read_byte(addr));
                     }
-                    // Capture high memory (0xFFFF80-0xFFFFFF) - 128 bytes
-                    let mut memory_high = Vec::new();
-                    for addr in 0xFFFF80..=0xFFFFFF {
-                        memory_high.push(current_cpu.read_byte(addr as u32));
+                    // I/O regions: LED/Switch (0xFF0000, 32 bytes) and UART (0xFF0100, 16 bytes)
+                    let mut memory_io_led = Vec::with_capacity(32);
+                    for addr in 0xFF0000..0xFF0020 {
+                        memory_io_led.push(current_cpu.read_byte(addr));
+                    }
+                    let mut memory_io_uart = Vec::with_capacity(16);
+                    for addr in 0xFF0100..0xFF0110 {
+                        memory_io_uart.push(current_cpu.read_byte(addr));
                     }
                     // Capture stack region (64 bytes around SP)
                     let sp = current_cpu.read_register(4);
@@ -562,13 +601,15 @@ pub fn app() -> Html {
                     let next_prev_regs = registers;
                     let next_prev_prev_regs = prev_regs;
                     let next_prev_mem_low = memory_low.clone();
-                    let next_prev_mem_high = memory_high.clone();
+                    let next_prev_mem_io_led = memory_io_led.clone();
+                    let next_prev_mem_io_uart = memory_io_uart.clone();
                     let next_prev_mem_stack = memory_stack.clone();
                     let next_prev_prev_mem_low = prev_mem_low.clone();
-                    let next_prev_prev_mem_high = prev_mem_high.clone();
+                    let next_prev_prev_mem_io_led = prev_mem_io_led.clone();
+                    let next_prev_prev_mem_io_uart = prev_mem_io_uart.clone();
                     let next_prev_prev_mem_stack = prev_mem_stack.clone();
 
-                    state.set(RustCpuState {
+                    state.set(EmulatorState {
                         registers,
                         prev_registers: prev_regs,
                         prev_prev_registers: prev_prev_regs,
@@ -578,15 +619,18 @@ pub fn app() -> Html {
                         led_value: current_cpu.get_led_value(),
                         instruction_count: current_cpu.get_instruction_count(),
                         memory_low,
-                        memory_high,
+                        memory_io_led,
+                        memory_io_uart,
                         memory_stack,
                         stack_base_addr: aligned_start,
                         program_end: current_cpu.get_program_end(),
                         prev_memory_low: prev_mem_low,
-                        prev_memory_high: prev_mem_high,
+                        prev_memory_io_led: prev_mem_io_led,
+                        prev_memory_io_uart: prev_mem_io_uart,
                         prev_memory_stack: prev_mem_stack,
                         prev_prev_memory_low: prev_prev_mem_low,
-                        prev_prev_memory_high: prev_prev_mem_high,
+                        prev_prev_memory_io_led: prev_prev_mem_io_led,
+                        prev_prev_memory_io_uart: prev_prev_mem_io_uart,
                         prev_prev_memory_stack: prev_prev_mem_stack,
                         current_instruction: current_cpu.get_current_instruction(),
                         assembled_lines: asm_lines.clone(),
@@ -603,12 +647,12 @@ pub fn app() -> Html {
                         let state = state.clone();
                         let asm_lines = asm_lines.clone();
                         gloo::timers::callback::Timeout::new(30, move || {
-                            run_step(current_cpu, cpu_handle, running, state, asm_lines, next_prev_regs, next_prev_prev_regs, next_prev_mem_low, next_prev_mem_high, next_prev_mem_stack, next_prev_prev_mem_low, next_prev_prev_mem_high, next_prev_prev_mem_stack, steps + 10, stop_flag, switch_state);
+                            run_step(current_cpu, cpu_handle, running, state, asm_lines, next_prev_regs, next_prev_prev_regs, next_prev_mem_low, next_prev_mem_io_led, next_prev_mem_io_uart, next_prev_mem_stack, next_prev_prev_mem_low, next_prev_prev_mem_io_led, next_prev_prev_mem_io_uart, next_prev_prev_mem_stack, steps + 10, stop_flag, switch_state);
                         }).forget();
                     }
                 }
 
-                run_step(initial_cpu, cpu_handle, running, state, asm_lines, prev_regs, prev_prev_regs, prev_mem_low, prev_mem_high, prev_mem_stack, prev_prev_mem_low, prev_prev_mem_high, prev_prev_mem_stack, 0, stop_flag, switch_state);
+                run_step(initial_cpu, cpu_handle, running, state, asm_lines, prev_regs, prev_prev_regs, prev_mem_low, prev_mem_io_led, prev_mem_io_uart, prev_mem_stack, prev_prev_mem_low, prev_prev_mem_io_led, prev_prev_mem_io_uart, prev_prev_mem_stack, 0, stop_flag, switch_state);
             }).forget();
         })
     };
@@ -640,7 +684,7 @@ pub fn app() -> Html {
     // Rust pipeline: Reset
     let on_rust_reset = {
         let rust_cpu = rust_cpu.clone();
-        let rust_cpu_state = rust_cpu_state.clone();
+        let rust_emu_state = rust_emu_state.clone();
         let rust_loaded_example = rust_loaded_example.clone();
 
         Callback::from(move |()| {
@@ -659,10 +703,14 @@ pub fn app() -> Html {
                     for addr in 0x000000..0x000080 {
                         memory_low.push(new_cpu.read_byte(addr));
                     }
-                    // Capture high memory (0xFFFF80-0xFFFFFF) - 128 bytes
-                    let mut memory_high = Vec::new();
-                    for addr in 0xFFFF80..=0xFFFFFF {
-                        memory_high.push(new_cpu.read_byte(addr as u32));
+                    // I/O regions: LED/Switch (0xFF0000, 32 bytes) and UART (0xFF0100, 16 bytes)
+                    let mut memory_io_led = Vec::with_capacity(32);
+                    for addr in 0xFF0000..0xFF0020 {
+                        memory_io_led.push(new_cpu.read_byte(addr));
+                    }
+                    let mut memory_io_uart = Vec::with_capacity(16);
+                    for addr in 0xFF0100..0xFF0110 {
+                        memory_io_uart.push(new_cpu.read_byte(addr));
                     }
                     // Capture stack region (top 16+ bytes, 16-byte aligned)
                     let sp = new_cpu.read_register(4);
@@ -672,7 +720,7 @@ pub fn app() -> Html {
                     let memory_stack = new_cpu.get_memory_slice(aligned_start, stack_size);
                     let program_end = new_cpu.get_program_end();
 
-                    rust_cpu_state.set(RustCpuState {
+                    rust_emu_state.set(EmulatorState {
                         registers,
                         prev_registers: registers, // No changes on reset
                         prev_prev_registers: registers,
@@ -682,15 +730,18 @@ pub fn app() -> Html {
                         led_value: new_cpu.get_led_value(),
                         instruction_count: new_cpu.get_instruction_count(),
                         memory_low: memory_low.clone(),
-                        memory_high: memory_high.clone(),
+                        memory_io_led: memory_io_led.clone(),
+                        memory_io_uart: memory_io_uart.clone(),
                         memory_stack: memory_stack.clone(),
                         stack_base_addr: aligned_start,
                         program_end,
                         prev_memory_low: memory_low.clone(),
-                        prev_memory_high: memory_high.clone(),
+                        prev_memory_io_led: memory_io_led.clone(),
+                        prev_memory_io_uart: memory_io_uart.clone(),
                         prev_memory_stack: memory_stack.clone(),
                         prev_prev_memory_low: memory_low,
-                        prev_prev_memory_high: memory_high,
+                        prev_prev_memory_io_led: memory_io_led,
+                        prev_prev_memory_io_uart: memory_io_uart,
                         prev_prev_memory_stack: memory_stack,
                         current_instruction: new_cpu.get_current_instruction(),
                         assembled_lines,
@@ -718,91 +769,22 @@ pub fn app() -> Html {
         Tab { id: "rust".to_string(), label: "Rust".to_string() },
     ];
 
-    // Register panel data
-    let registers = {
-        let regs = (*cpu).get_registers();
-        let last_regs = &*last_registers;
-        let reg_names = ["r0", "r1", "r2", "fp", "sp", "z", "iv", "ir"];
-        let mut reg_list = Vec::new();
-        for i in 0..8 {
-            // Skip z register (index 5) — always zero, not useful in status
-            if i == 5 { continue; }
-            let changed = regs[i] != last_regs[i];
-            reg_list.push(Register {
-                name: reg_names[i].to_string(),
-                value: format!("0x{:06X} ({})", regs[i], regs[i] as i32),
-                changed,
-            });
-        }
-        reg_list
-    };
-
-    let legend_items = vec![
-        LegendItem {
-            label: "fp".to_string(),
-            value: "Frame Pointer".to_string(),
-            changed: false,
-        },
-        LegendItem {
-            label: "sp".to_string(),
-            value: "Stack Pointer".to_string(),
-            changed: false,
-        },
-        LegendItem {
-            label: "z".to_string(),
-            value: "Always zero (compare only)".to_string(),
-            changed: false,
-        },
-        LegendItem {
-            label: "iv".to_string(),
-            value: "Interrupt Vector".to_string(),
-            changed: false,
-        },
-        LegendItem {
-            label: "ir".to_string(),
-            value: "Interrupt Return".to_string(),
-            changed: false,
-        },
-    ];
-
-    // Memory data — multi-region display
-    let program_end = (*cpu).get_program_end();
-    let program_bytes = std::cmp::min(program_end as usize, 256).max(32);
-    // Round up to next multiple of 16 for clean display
-    let program_bytes = program_bytes.div_ceil(16) * 16;
-    let memory_program = (*cpu).get_memory_slice(0, program_bytes as u32);
-    let sp = (*cpu).read_register(4); // r4 = SP
-    let stack_display_bytes: u32 = 64;
-    let memory_stack = (*cpu).get_memory_slice(sp, stack_display_bytes);
-    let memory_io_led = (*cpu).get_memory_slice(0xFF0000, 32);
-    let memory_io_uart = (*cpu).get_memory_slice(0xFF0100, 16);
-    let pc = (*cpu).pc();
-
     // Get examples for the modal
     let examples = get_examples();
 
     // Pre-built Rust examples
     let rust_examples = get_rust_examples();
 
-    // Compute LED and switch values outside html! macro
-    let asm_led_on = ((*cpu).get_leds() & 1) == 1;
-    let asm_led_class = if asm_led_on { "led led-on led-large" } else { "led led-off led-large" };
-    let asm_led_status = if asm_led_on { "ON" } else { "OFF" };
-    let asm_button_pressed = ((*cpu).get_switches() & 1) == 0; // S2 normally high: low = pressed
-
-    let asm_button_status = if asm_button_pressed { "PRESSED" } else { "released" };
-
-    // Button toggle callback for assembler tab
-    let asm_button_onclick = {
+    // Assembler switch toggle callback
+    let on_asm_switch_toggle = {
+        let asm_switch_value = asm_switch_value.clone();
         let cpu = cpu.clone();
-        let switches = shared_switches.borrow().clone();
-        Callback::from(move |_: MouseEvent| {
-            // Toggle in shared state (for run loop)
-            let old_val = switches.get();
-            switches.set(old_val ^ 1);
-            // Also toggle in CPU state (for UI display)
+        let switch_state = shared_switches.clone();
+        Callback::from(move |new_value: u8| {
+            asm_switch_value.set(new_value);
+            switch_state.borrow().set(new_value);
             let mut new_cpu = (*cpu).clone();
-            new_cpu.toggle_switch(0);
+            new_cpu.set_switches(new_value);
             cpu.set(new_cpu);
         })
     };
@@ -822,10 +804,19 @@ pub fn app() -> Html {
             <div class={if *active_tab == "assembler" { "main-content" } else { "main-content hidden" }}>
                 <ProgramArea
                     on_assemble={on_assemble}
-                    on_step={on_step}
+                    on_step={{
+                        let on_step = on_step.clone();
+                        Callback::from(move |()| on_step.emit(1))
+                    }}
                     on_run={on_run.clone()}
-                    on_stop={on_stop}
-                    on_reset={on_reset}
+                    on_stop={{
+                        let stop_flag = asm_stop_requested.borrow().clone();
+                        Callback::from(move |()| stop_flag.set(true))
+                    }}
+                    on_reset={{
+                        let on_reset = on_reset.clone();
+                        Callback::from(move |()| on_reset.emit(()))
+                    }}
                     is_running={*asm_is_running}
                     assembly_output={
                         if !assembly_lines.is_empty() {
@@ -865,89 +856,22 @@ pub fn app() -> Html {
                     initial_code={Some((*program_code).clone())}
                     step_enabled={*asm_assembled && !(*cpu).is_halted()}
                     run_enabled={*asm_assembled && !(*cpu).is_halted()}
+                    show_exec_buttons={false}
                 />
 
                 <div class="right-panels">
-                    <RegisterPanel
-                        registers={registers}
-                        legend_items={legend_items}
-                    />
-
-                    // CPU Status
-                    <div class="cpu-status">
-                        <div class="status-left">
-                            <div class="status-item">
-                                <span class="status-label">{"PC:"}</span>
-                                <span class="status-value">{format!("0x{:06X}", (*cpu).pc())}</span>
-                            </div>
-                            <div class="status-item">
-                                <span class="status-label">{"Status:"}</span>
-                                <span class="status-value">
-                                    {if (*cpu).is_halted() { "HALTED" } else { "RUNNING" }}
-                                </span>
-                            </div>
-                            <div class="status-item">
-                                <span class="status-label">{"C:"}</span>
-                                <span class={if (*cpu).get_c_flag() { "status-value condition-set" } else { "status-value" }}>
-                                    {if (*cpu).get_c_flag() { "1" } else { "0" }}
-                                </span>
-                            </div>
-                        </div>
-                        <div class="status-right">
-                            <div class="status-item">
-                                <span class="status-label">{"Instructions:"}</span>
-                                <span class="status-value">{(*cpu).instruction_count()}</span>
-                            </div>
-                        </div>
-                        </div>
-
-                    // I/O Panel: LED D2 and Button S2 — compact horizontal layout
-                    <div class="io-bar">
-                        <span class="io-bar-label">{"I/O (0xFF0000):"}</span>
-                        <div class="io-bar-item">
-                            <button class="io-button" title="Click to toggle S2" onclick={asm_button_onclick}>
-                                {"S2 Switch"}
-                            </button>
-                            <span class="io-bar-status">{asm_button_status}</span>
-                        </div>
-                        <div class="io-bar-item">
-                            <span class="io-bar-name">{"LED D2"}</span>
-                            <div class={asm_led_class} title="LED D2">{"D2"}</div>
-                            <span class="io-bar-status">{asm_led_status}</span>
-                        </div>
-                    </div>
-
-                    <MemoryViewer
-                        memory={memory_program.clone()}
-                        pc={pc}
-                        base_address={0u32}
-                        title={Some(format!("Program (0x000000 \u{2192} 0x{:06X})", program_end))}
-                        bytes_per_row={16}
-                        bytes_to_show={program_bytes}
-                    />
-                    <MemoryViewer
-                        memory={memory_stack.clone()}
-                        pc={0u32}
-                        base_address={sp}
-                        title={Some(format!("Stack (SP = 0x{:06X})", sp))}
-                        bytes_per_row={16}
-                        bytes_to_show={stack_display_bytes as usize}
-                    />
-                    <MemoryViewer
-                        memory={memory_io_led}
-                        pc={0u32}
-                        base_address={0xFF0000u32}
-                        title={Some("I/O: LED/Button + IntEnable".to_string())}
-                        bytes_per_row={16}
-                        bytes_to_show={32}
-                    />
-                    <MemoryViewer
-                        memory={memory_io_uart}
-                        pc={0u32}
-                        base_address={0xFF0100u32}
-                        title={Some("I/O: UART Data + Status".to_string())}
-                        bytes_per_row={16}
-                        bytes_to_show={16}
+                    <DebugPanel
+                        cpu_state={(*asm_emu_state).clone()}
+                        is_loaded={*asm_assembled}
+                        is_running={*asm_is_running}
+                        on_step={on_step.clone()}
+                        on_run={on_run.clone()}
+                        on_stop={on_stop}
+                        on_reset={on_reset}
+                        switch_value={*asm_switch_value}
+                        on_switch_toggle={on_asm_switch_toggle}
+                        listing_scroll_id={"asm-debug-listing-scroll".to_string()}
+                        show_listing={false}
                     />
                 </div>
             </div>
@@ -963,7 +887,7 @@ pub fn app() -> Html {
                     on_stop={on_rust_stop}
                     on_reset={on_rust_reset}
                     on_unload={on_rust_unload}
-                    cpu_state={(*rust_cpu_state).clone()}
+                    cpu_state={(*rust_emu_state).clone()}
                     is_loaded={*rust_is_loaded}
                     is_running={*rust_is_running}
                     switch_value={*rust_switch_value}
@@ -1142,13 +1066,15 @@ pub fn app() -> Html {
 
             // Footer
             <footer class="app-footer">
-                <div class="footer-left">
-                    <span>{"MIT License"}</span>
-                    <span>{"© 2026 Michael A Wright"}</span>
-                </div>
-                <div class="footer-right">
-                    <span>{format!("{} | {} | {}", env!("VERGEN_BUILD_HOST"), env!("VERGEN_GIT_SHA_SHORT"), env!("VERGEN_BUILD_TIMESTAMP"))}</span>
-                </div>
+                <span>{"MIT License"}</span>
+                <span class="footer-sep">{"\u{00B7}"}</span>
+                <span>{"© 2026 Michael A Wright"}</span>
+                <span class="footer-sep">{"\u{00B7}"}</span>
+                <span>{env!("VERGEN_BUILD_HOST")}</span>
+                <span class="footer-sep">{"\u{00B7}"}</span>
+                <span>{env!("VERGEN_GIT_SHA_SHORT")}</span>
+                <span class="footer-sep">{"\u{00B7}"}</span>
+                <span>{env!("VERGEN_BUILD_TIMESTAMP")}</span>
             </footer>
         </div>
     }
@@ -1209,17 +1135,50 @@ fn render_challenges_list(
 }
 
 // Constants for content
-const EXAMPLE_PROGRAM: &str = "; COR24 Example: Basic Arithmetic
-; Load constants and add them
+const EXAMPLE_PROGRAM: &str = "; Blink LED: Toggle LED D2 on and off
+; LED D2 at 0xFF0000 (write bit 0)
+; Click Run to watch the LED blink!
 
-        lc      r0,10       ; r0 = 10
-        lc      r1,20       ; r1 = 20
-        add     r0,r1       ; r0 = r0 + r1 = 30
+        la      r1,0xFF0000
 
-        lc      r2,5        ; r2 = 5
-        add     r0,r2       ; r0 = 35
+loop:
+        lc      r0,1
+        sb      r0,0(r1)
 
-halt:   bra     halt        ; Done — infinite loop";
+        push    r1
+        lc      r1,10
+delay1: lc      r2,0
+wait1:  lc      r0,1
+        add     r2,r0
+        lc      r0,127
+        clu     r2,r0
+        brt     wait1
+        lc      r0,1
+        sub     r1,r0
+        ceq     r1,z
+        brf     delay1
+        pop     r1
+
+        lc      r0,0
+        sb      r0,0(r1)
+
+        push    r1
+        lc      r1,10
+delay2: lc      r2,0
+wait2:  lc      r0,1
+        add     r2,r0
+        lc      r0,127
+        clu     r2,r0
+        brt     wait2
+        lc      r0,1
+        sub     r1,r0
+        ceq     r1,z
+        brf     delay2
+        pop     r1
+
+        bra     loop
+
+halt:   bra     halt";
 
 const TUTORIAL_CONTENT: &str = r#"
 <h3>MakerLisp COR24 Assembly Emulator</h3>
@@ -1386,12 +1345,90 @@ jmp     (r1)        ; Return
 "#;
 
 /// Pre-built Rust pipeline examples (Rust → MSP430 → COR24)
+/// Capture current CPU state into an EmulatorState, preserving previous state for heatmap
+fn capture_cpu_state(cpu: &WasmCpu, prev: &EmulatorState) -> EmulatorState {
+    let regs = cpu.get_registers();
+    let mut registers = [0u32; 8];
+    for (i, &val) in regs.iter().enumerate().take(8) {
+        registers[i] = val;
+    }
+
+    // Capture program + data memory: program area + 128 bytes for nearby data,
+    // minimum 256 bytes, 16-byte aligned, max 4KB.
+    let prog_end = cpu.get_program_end() as usize;
+    let low_size = ((prog_end + 128).max(256) & !0xF).min(0x1000);
+    let mut memory_low = Vec::with_capacity(low_size);
+    for addr in 0..(low_size as u32) {
+        memory_low.push(cpu.read_byte(addr));
+    }
+    // I/O regions: LED/Switch (0xFF0000, 32 bytes) and UART (0xFF0100, 16 bytes)
+    let mut memory_io_led = Vec::with_capacity(32);
+    for addr in 0xFF0000..0xFF0020 {
+        memory_io_led.push(cpu.read_byte(addr));
+    }
+    let mut memory_io_uart = Vec::with_capacity(16);
+    for addr in 0xFF0100..0xFF0110 {
+        memory_io_uart.push(cpu.read_byte(addr));
+    }
+
+    let sp = cpu.read_register(4);
+    let stack_top: u32 = 0xFEEC00;
+    let aligned_start = (sp.min(stack_top - 16)) & !0xF;
+    let stack_size = (stack_top - aligned_start).min(256);
+    let memory_stack = cpu.get_memory_slice(aligned_start, stack_size);
+
+    EmulatorState {
+        registers,
+        prev_registers: prev.registers,
+        prev_prev_registers: prev.prev_registers,
+        pc: cpu.get_pc(),
+        condition_flag: cpu.get_condition_flag(),
+        is_halted: cpu.is_halted(),
+        led_value: cpu.get_led_value(),
+        instruction_count: cpu.get_instruction_count(),
+        memory_low: memory_low.clone(),
+        memory_io_led: memory_io_led.clone(),
+        memory_io_uart: memory_io_uart.clone(),
+        memory_stack: memory_stack.clone(),
+        stack_base_addr: aligned_start,
+        program_end: cpu.get_program_end(),
+        prev_memory_low: prev.memory_low.clone(),
+        prev_memory_io_led: prev.memory_io_led.clone(),
+        prev_memory_io_uart: prev.memory_io_uart.clone(),
+        prev_memory_stack: prev.memory_stack.clone(),
+        prev_prev_memory_low: prev.prev_memory_low.clone(),
+        prev_prev_memory_io_led: prev.prev_memory_io_led.clone(),
+        prev_prev_memory_io_uart: prev.prev_memory_io_uart.clone(),
+        prev_prev_memory_stack: prev.prev_memory_stack.clone(),
+        current_instruction: cpu.get_current_instruction(),
+        assembled_lines: cpu.get_assembled_lines(),
+    }
+}
+
+/// Capture initial CPU state (no previous state for heatmap)
+fn capture_cpu_state_initial(cpu: &WasmCpu) -> EmulatorState {
+    let empty = EmulatorState::default();
+    let mut state = capture_cpu_state(cpu, &empty);
+    // On initial load, prev = current (no changes highlighted)
+    state.prev_registers = state.registers;
+    state.prev_prev_registers = state.registers;
+    state.prev_memory_low = state.memory_low.clone();
+    state.prev_memory_io_led = state.memory_io_led.clone();
+    state.prev_memory_io_uart = state.memory_io_uart.clone();
+    state.prev_memory_stack = state.memory_stack.clone();
+    state.prev_prev_memory_low = state.memory_low.clone();
+    state.prev_prev_memory_io_led = state.memory_io_led.clone();
+    state.prev_prev_memory_io_uart = state.memory_io_uart.clone();
+    state.prev_prev_memory_stack = state.memory_stack.clone();
+    state
+}
+
 fn get_rust_examples() -> Vec<RustExample> {
     vec![
-        // Demo 1: Blinky
+        // 1. Add
         RustExample {
-            name: "Blinky".to_string(),
-            description: "Toggle LED with delay loop".to_string(),
+            name: "Add".to_string(),
+            description: "Compute 100 + 200 + 42 = 342, return in r0".to_string(),
             rust_source: r#"#[no_mangle]
 pub unsafe fn demo_blinky() -> ! {
     loop {
@@ -2168,3 +2205,4 @@ uart_putc:
         },
     ]
 }
+

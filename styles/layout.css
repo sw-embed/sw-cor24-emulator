@@ -16,3 +16,16 @@
     overflow: hidden;
     margin-left: 160px; /* Space for fixed sidebar */
 }
+
+.app-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 0.75em;
+    color: #666;
+}
+
+.footer-sep {
+    color: #444;
+}

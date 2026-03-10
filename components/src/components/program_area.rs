@@ -14,6 +14,9 @@ pub struct ProgramAreaProps {
     pub run_enabled: bool,
     #[prop_or(false)]
     pub is_running: bool,
+    /// Hide Step/Run/Reset buttons when DebugPanel provides them (default: true)
+    #[prop_or(true)]
+    pub show_exec_buttons: bool,
 }
 
 #[function_component(ProgramArea)]
@@ -90,13 +93,15 @@ pub fn program_area(props: &ProgramAreaProps) -> Html {
             // Controls (middle)
             <div class="controls">
                 <button id="assembleBtn" onclick={on_assemble_click}>{"Assemble"}</button>
-                <button id="stepBtn" onclick={on_step_click} disabled={!props.step_enabled || props.is_running}>{"Step"}</button>
-                if props.is_running {
-                    <button id="stopBtn" class="stop-btn" onclick={on_stop_click}>{"Stop"}</button>
-                } else {
-                    <button id="runBtn" onclick={on_run_click} disabled={!props.run_enabled}>{"Run"}</button>
+                if props.show_exec_buttons {
+                    <button id="stepBtn" onclick={on_step_click} disabled={!props.step_enabled || props.is_running}>{"Step"}</button>
+                    if props.is_running {
+                        <button id="stopBtn" class="stop-btn" onclick={on_stop_click}>{"Stop"}</button>
+                    } else {
+                        <button id="runBtn" onclick={on_run_click} disabled={!props.run_enabled}>{"Run"}</button>
+                    }
+                    <button id="resetBtn" onclick={on_reset_click} disabled={props.is_running}>{"Reset"}</button>
                 }
-                <button id="resetBtn" onclick={on_reset_click} disabled={props.is_running}>{"Reset"}</button>
             </div>
 
             // Assembly output (bottom half)
