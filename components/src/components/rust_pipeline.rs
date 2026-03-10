@@ -128,14 +128,16 @@ pub fn rust_pipeline(props: &RustPipelineProps) -> Html {
     // Load dialog state
     let load_dialog_open = use_state(|| false);
 
-    // Selected example state - default to "Blink LED" if available
+    // Selected example state
     let selected_example = use_state(|| None::<RustExample>);
+
+    // Auto-load "Blink LED" on first render
     {
-        let selected_example = selected_example.clone();
+        let on_load = props.on_load.clone();
         let examples = props.examples.clone();
         use_effect_with((), move |_| {
             if let Some(blink) = examples.iter().find(|e| e.name == "Blink LED") {
-                selected_example.set(Some(blink.clone()));
+                on_load.emit(blink.clone());
             }
             || ()
         });
