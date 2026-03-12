@@ -70,10 +70,36 @@ enum MspOperand {
 pub fn translate_msp430(msp_asm: &str, entry_point: Option<&str>) -> Result<String> {
     let lines = parse_msp430(msp_asm)?;
 
+    // Collect all labels for validation
+    let all_labels: Vec<&str> = lines.iter().filter_map(|l| {
+        if let MspLine::Label(name) = l { Some(name.as_str()) } else { None }
+    }).collect();
+
+    // Validate explicit entry point exists as a label
+    if let Some(entry_name) = entry_point {
+        if !all_labels.contains(&entry_name) {
+            bail!("entry point '{}' not found in MSP430 assembly. Available labels: {}",
+                entry_name,
+                all_labels.iter()
+                    .filter(|l| !l.starts_with('.') && !l.starts_with("_RN"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "));
+        }
+    }
+
     // Determine entry point: explicit, or auto-detect from .globl directives
+    let has_globl = lines.iter().any(|l| matches!(l, MspLine::Directive(d) if d.starts_with(".globl")));
     let entry = entry_point.map(|s| s.to_string()).or_else(|| {
         detect_entry_point(&lines)
     });
+
+    // Warn if this looks like compiled code but has no identifiable entry point
+    if entry.is_none() && has_globl {
+        eprintln!("warning: MSP430 input has .globl symbols but no entry point detected.");
+        eprintln!("  Use --entry <func> to specify the entry point.");
+        eprintln!("  Without an entry point, execution will start at address 0 (first function).");
+    }
 
     let mut out = String::new();
     out.push_str("; COR24 Assembly - Generated from MSP430 via msp430-to-cor24\n");
@@ -1343,5 +1369,219 @@ delay:
         // Should have store to stack (via temp reg since COR24 can't use sp as base)
         assert!(result.contains("mov     r2, sp"));
         assert!(result.contains("sw      r0, 0(r2)"));
+    }
+
+    // ============================================================
+    // Entry point and pipeline tests
+    // ============================================================
+
+    /// Helper: MSP430 assembly for a multi-function file with .globl directives,
+    /// mimicking real rustc output (panic handler first, then functions alphabetically)
+    fn multi_function_msp430() -> &'static str {
+        r#"
+	.section	.text._RNvCs_panic,"ax",@progbits
+	.globl	_RNvCs_panic
+_RNvCs_panic:
+.LBB0_1:
+	jmp	.LBB0_1
+
+	.section	.text.delay,"ax",@progbits
+	.globl	delay
+delay:
+	sub	#2, r1
+	tst	r12
+	jeq	.LBB1_2
+.LBB1_2:
+	add	#2, r1
+	ret
+
+	.section	.text.demo_blinky,"ax",@progbits
+	.globl	demo_blinky
+demo_blinky:
+	mov	#-256, r12
+	mov	#1, r13
+	call	#mmio_write
+	mov	#1000, r12
+	call	#delay
+.LBB3_1:
+	jmp	.LBB3_1
+
+	.section	.text.mmio_write,"ax",@progbits
+	.globl	mmio_write
+mmio_write:
+	mov	r13, 0(r12)
+	ret
+"#
+    }
+
+    #[test]
+    fn test_entry_point_explicit() {
+        // Positive: explicit --entry flag produces correct prologue
+        let result = translate_msp430(multi_function_msp430(), Some("demo_blinky")).unwrap();
+        assert!(result.starts_with("; COR24 Assembly"));
+        assert!(result.contains("bra     demo_blinky"));
+        // Prologue must come before any function code
+        let bra_pos = result.find("bra     demo_blinky").unwrap();
+        let first_func = result.find("_RNvCs_panic:").unwrap();
+        assert!(bra_pos < first_func, "bra prologue must precede first function");
+    }
+
+    #[test]
+    fn test_entry_point_auto_detect_demo() {
+        // Positive: auto-detects demo_* as entry point
+        let result = translate_msp430(multi_function_msp430(), None).unwrap();
+        assert!(result.contains("bra     demo_blinky"));
+    }
+
+    #[test]
+    fn test_entry_point_auto_detect_main() {
+        // Positive: auto-detects main as entry point
+        let msp430 = r#"
+	.section	.text.helper,"ax",@progbits
+	.globl	helper
+helper:
+	ret
+
+	.section	.text.main,"ax",@progbits
+	.globl	main
+main:
+	call	#helper
+	ret
+"#;
+        let result = translate_msp430(msp430, None).unwrap();
+        assert!(result.contains("bra     main"));
+    }
+
+    #[test]
+    fn test_entry_point_explicit_not_found_fails() {
+        // Negative: explicit --entry with non-existent label fails
+        let err = translate_msp430(multi_function_msp430(), Some("nonexistent")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("entry point 'nonexistent' not found"),
+            "Expected 'not found' error, got: {}", msg);
+        assert!(msg.contains("demo_blinky"),
+            "Error should list available labels, got: {}", msg);
+    }
+
+    #[test]
+    fn test_entry_point_explicit_typo_fails() {
+        // Negative: common typo in entry point name
+        let err = translate_msp430(multi_function_msp430(), Some("demo_blink")).unwrap_err();
+        assert!(err.to_string().contains("entry point 'demo_blink' not found"));
+    }
+
+    #[test]
+    fn test_no_globl_no_prologue() {
+        // No .globl directives = no auto-detection, no prologue (legacy single-function case)
+        let msp430 = r#"
+	.section	.text.add,"ax",@progbits
+add:
+	add	r13, r12
+	ret
+"#;
+        let result = translate_msp430(msp430, None).unwrap();
+        assert!(!result.contains("Reset vector"), "Should not emit prologue without .globl");
+        // But the function itself should still be translated
+        assert!(result.contains("add     r0, r1"));
+    }
+
+    #[test]
+    fn test_no_entry_detectable_with_globl_still_translates() {
+        // .globl directives exist but none match demo_*/main — warns but still works
+        let msp430 = r#"
+	.section	.text._RNvCs_panic,"ax",@progbits
+	.globl	_RNvCs_panic
+_RNvCs_panic:
+.LBB0_1:
+	jmp	.LBB0_1
+
+	.section	.text.mmio_write,"ax",@progbits
+	.globl	mmio_write
+mmio_write:
+	mov	r13, 0(r12)
+	ret
+"#;
+        // Should succeed (with warning to stderr) but no prologue
+        let result = translate_msp430(msp430, None).unwrap();
+        assert!(!result.contains("Reset vector"),
+            "Should not emit reset vector when no entry detected");
+        assert!(result.contains("mmio_write:"),
+            "Functions should still be translated");
+    }
+
+    #[test]
+    fn test_prologue_assembles_correctly() {
+        // End-to-end: translated COR24 with prologue should assemble without errors
+        let cor24 = translate_msp430(multi_function_msp430(), Some("demo_blinky")).unwrap();
+
+        let mut assembler = cor24_emulator::assembler::Assembler::new();
+        let result = assembler.assemble(&cor24);
+        assert!(result.errors.is_empty(),
+            "Assembly errors: {:?}", result.errors);
+        // Binary should have >4 bytes (prologue + functions)
+        assert!(result.bytes.len() > 4, "Binary should be > 4 bytes");
+    }
+
+    #[test]
+    fn test_prologue_jumps_to_correct_address() {
+        // End-to-end: load into CPU, execute prologue, verify PC lands at entry
+        let cor24 = translate_msp430(multi_function_msp430(), Some("demo_blinky")).unwrap();
+
+        let mut assembler = cor24_emulator::assembler::Assembler::new();
+        let result = assembler.assemble(&cor24);
+        assert!(result.errors.is_empty(), "Assembly errors: {:?}", result.errors);
+
+        // Find the address of demo_blinky label
+        let blinky_addr = result.lines.iter()
+            .find(|l| l.source.trim() == "demo_blinky:")
+            .map(|l| l.address)
+            .expect("demo_blinky label should exist in assembled output");
+        assert!(blinky_addr > 0, "demo_blinky should not be at address 0");
+
+        // Load and execute one instruction (the bra prologue)
+        let mut cpu = cor24_emulator::cpu::state::CpuState::new();
+        for line in &result.lines {
+            for (i, &b) in line.bytes.iter().enumerate() {
+                cpu.write_byte(line.address + i as u32, b);
+            }
+        }
+        cpu.pc = 0;
+        let executor = cor24_emulator::cpu::executor::Executor::new();
+        executor.step(&mut cpu);
+
+        assert_eq!(cpu.pc, blinky_addr,
+            "After executing prologue, PC should be at demo_blinky (0x{:06X}), got 0x{:06X}",
+            blinky_addr, cpu.pc);
+    }
+
+    #[test]
+    fn test_detect_entry_skips_mangled_names() {
+        // Only _RN... mangled names — should not be auto-detected
+        let lines = vec![
+            MspLine::Directive(".globl\t_RNvCs_something_mangled".to_string()),
+            MspLine::Label("_RNvCs_something_mangled".to_string()),
+        ];
+        assert_eq!(detect_entry_point(&lines), None);
+    }
+
+    #[test]
+    fn test_detect_entry_skips_helpers() {
+        // Only known helpers — should not be auto-detected
+        let lines = vec![
+            MspLine::Directive(".globl\tmmio_write".to_string()),
+            MspLine::Directive(".globl\tdelay".to_string()),
+            MspLine::Directive(".globl\tuart_putc".to_string()),
+        ];
+        assert_eq!(detect_entry_point(&lines), None);
+    }
+
+    #[test]
+    fn test_detect_entry_prefers_demo_over_other() {
+        // Both demo_foo and bar_func exist — should prefer demo_foo
+        let lines = vec![
+            MspLine::Directive(".globl\tbar_func".to_string()),
+            MspLine::Directive(".globl\tdemo_foo".to_string()),
+        ];
+        assert_eq!(detect_entry_point(&lines), Some("demo_foo".to_string()));
     }
 }
