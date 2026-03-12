@@ -1143,9 +1143,18 @@ pub fn app() -> Html {
                     let challenge_mode = challenge_mode.clone();
                     let current_challenge_id = current_challenge_id.clone();
                     let challenge_result = challenge_result.clone();
+                    let asm_is_running = asm_is_running.clone();
+                    let asm_assembled = asm_assembled.clone();
+                    let asm_emu_state = asm_emu_state.clone();
+                    let stop_flag = asm_stop_requested.borrow().clone();
                     Callback::from(move |idx: usize| {
                         if let Some((_, _, code)) = examples.get(idx) {
+                            // Stop any running animation loop
+                            stop_flag.set(true);
+                            asm_is_running.set(false);
+                            asm_assembled.set(false);
                             cpu.set(WasmCpu::new());
+                            asm_emu_state.set(EmulatorState::default());
                             assembly_output.set(None);
                             assembly_lines.set(Vec::new());
                             challenge_mode.set(false);
@@ -1178,7 +1187,14 @@ pub fn app() -> Html {
             />
 
             <Modal id="challenges" title="Challenges" active={*challenges_open} on_close={close_challenges}>
-                {render_challenges_list(challenge_mode.clone(), current_challenge_id.clone(), program_code.clone(), challenges_open.clone())}
+                {render_challenges_list(
+                    challenge_mode.clone(), current_challenge_id.clone(),
+                    program_code.clone(), challenges_open.clone(),
+                    asm_is_running.clone(), asm_assembled.clone(),
+                    asm_emu_state.clone(), cpu.clone(),
+                    assembly_output.clone(), assembly_lines.clone(),
+                    asm_stop_requested.borrow().clone(), challenge_result.clone(),
+                )}
             </Modal>
 
             <Modal id="isaRef" title="ISA Reference" active={*isa_ref_open} on_close={close_isa_ref}>
@@ -1215,11 +1231,20 @@ pub fn app() -> Html {
 }
 
 // Helper function to render challenges list
+#[allow(clippy::too_many_arguments)]
 fn render_challenges_list(
     challenge_mode: UseStateHandle<bool>,
     current_challenge_id: UseStateHandle<Option<usize>>,
     program_code: UseStateHandle<String>,
     challenges_open: UseStateHandle<bool>,
+    asm_is_running: UseStateHandle<bool>,
+    asm_assembled: UseStateHandle<bool>,
+    asm_emu_state: UseStateHandle<EmulatorState>,
+    cpu: UseStateHandle<WasmCpu>,
+    assembly_output: UseStateHandle<Option<Html>>,
+    assembly_lines: UseStateHandle<Vec<String>>,
+    stop_flag: Rc<Cell<bool>>,
+    challenge_result: UseStateHandle<Option<Result<String, String>>>,
 ) -> Html {
     let challenges = get_challenges();
 
@@ -1237,6 +1262,14 @@ fn render_challenges_list(
                 let current_challenge_id = current_challenge_id.clone();
                 let program_code = program_code.clone();
                 let challenges_open = challenges_open.clone();
+                let asm_is_running = asm_is_running.clone();
+                let asm_assembled = asm_assembled.clone();
+                let asm_emu_state = asm_emu_state.clone();
+                let cpu = cpu.clone();
+                let assembly_output = assembly_output.clone();
+                let assembly_lines = assembly_lines.clone();
+                let stop_flag = stop_flag.clone();
+                let challenge_result = challenge_result.clone();
 
                 html! {
                     <div class="challenge-item">
@@ -1248,7 +1281,24 @@ fn render_challenges_list(
                                 let program_code = program_code.clone();
                                 let challenges_open = challenges_open.clone();
                                 let initial_code = initial_code.clone();
+                                let asm_is_running = asm_is_running.clone();
+                                let asm_assembled = asm_assembled.clone();
+                                let asm_emu_state = asm_emu_state.clone();
+                                let cpu = cpu.clone();
+                                let assembly_output = assembly_output.clone();
+                                let assembly_lines = assembly_lines.clone();
+                                let stop_flag = stop_flag.clone();
+                                let challenge_result = challenge_result.clone();
                                 Callback::from(move |_| {
+                                    // Stop any running animation loop
+                                    stop_flag.set(true);
+                                    asm_is_running.set(false);
+                                    asm_assembled.set(false);
+                                    cpu.set(WasmCpu::new());
+                                    asm_emu_state.set(EmulatorState::default());
+                                    assembly_output.set(None);
+                                    assembly_lines.set(Vec::new());
+                                    challenge_result.set(None);
                                     challenge_mode.set(true);
                                     current_challenge_id.set(Some(id));
                                     program_code.set(initial_code.clone());
