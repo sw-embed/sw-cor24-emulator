@@ -30,8 +30,8 @@ fn print_leds(leds: u8) {
     std::io::stdout().flush().ok();
 }
 
-/// Run emulator with timing control
-fn run_with_timing(emu: &mut EmulatorCore, speed: u64, time_limit: f64) -> u64 {
+/// Run emulator with timing control and optional instruction limit
+fn run_with_timing(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_instructions: i64) -> u64 {
     let start = Instant::now();
     let time_limit_duration = Duration::from_secs_f64(time_limit);
 
@@ -54,7 +54,18 @@ fn run_with_timing(emu: &mut EmulatorCore, speed: u64, time_limit: f64) -> u64 {
             break;
         }
 
-        let result = emu.run_batch(batch_size);
+        if max_instructions >= 0 && total_instructions >= max_instructions as u64 {
+            break;
+        }
+
+        let this_batch = if max_instructions >= 0 {
+            let remaining = (max_instructions as u64).saturating_sub(total_instructions);
+            batch_size.min(remaining).max(1)
+        } else {
+            batch_size
+        };
+
+        let result = emu.run_batch(this_batch);
         total_instructions += result.instructions_run;
 
         // Check for LED changes
@@ -140,6 +151,7 @@ struct CliArgs {
     command: String,
     speed: u64,
     time_limit: f64,
+    max_instructions: i64,
     file: Option<String>,
     dump: bool,
     entry: Option<String>,           // entry point label
@@ -151,6 +163,7 @@ fn parse_args() -> CliArgs {
         command: String::new(),
         speed: DEFAULT_SPEED,
         time_limit: DEFAULT_TIME_LIMIT,
+        max_instructions: -1,
         file: None,
         dump: false,
         entry: None,
@@ -184,6 +197,12 @@ fn parse_args() -> CliArgs {
             }
             "--dump" => {
                 cli.dump = true;
+            }
+            "--max-instructions" | "-n" => {
+                if i + 1 < args.len() {
+                    cli.max_instructions = args[i + 1].parse().unwrap_or(-1);
+                    i += 1;
+                }
             }
             "--entry" | "-e" => {
                 if i + 1 < args.len() {
@@ -363,6 +382,7 @@ fn main() {
         println!("Options:");
         println!("  --speed, -s <ips>    Instructions per second (default: {})", DEFAULT_SPEED);
         println!("  --time, -t <secs>    Time limit in seconds (default: {})", DEFAULT_TIME_LIMIT);
+        println!("  --max-instructions, -n <count>  Stop after N instructions (-1 = no limit, default)");
         println!("  --dump               Dump CPU state, I/O, and non-zero memory after halt");
         println!("  --entry, -e <label>  Set entry point to label address");
         println!();
@@ -400,7 +420,7 @@ fn main() {
             load_assembled(&mut emu, &result);
 
             println!("Running (Ctrl+C to stop)...\n");
-            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit);
+            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit, cli.max_instructions);
 
             println!("\n\nExecuted {} instructions in {:.1}s", instructions, cli.time_limit);
             println!("Effective speed: {:.0} IPS", instructions as f64 / cli.time_limit);
@@ -455,7 +475,7 @@ fn main() {
                      if cli.speed == 0 { "max".to_string() } else { cli.speed.to_string() },
                      cli.time_limit);
 
-            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit);
+            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit, cli.max_instructions);
 
             // Print UART output if any
             let uart = emu.get_uart_output();
