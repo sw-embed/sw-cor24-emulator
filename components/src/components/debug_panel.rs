@@ -271,13 +271,16 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
                             } else {
                                 format!("0x{:06X}", val)
                             };
-                            let full_tooltip = if i == 5 {
-                                tooltip.to_string()
-                            } else if val & 0x800000 != 0 {
-                                let signed = val as i32 - 0x1000000;
-                                format!("{tooltip} = {val} or {signed}")
+                            // Show decimal for GP registers (r0-r2) only
+                            let full_tooltip = if i <= 2 {
+                                if val & 0x800000 != 0 {
+                                    let signed = val as i32 - 0x1000000;
+                                    format!("{tooltip} = {val} or {signed}")
+                                } else {
+                                    format!("{tooltip} = {val}")
+                                }
                             } else {
-                                format!("{tooltip} = {val}")
+                                tooltip.to_string()
                             };
                             html! {
                                 <div class={row_class} data-tooltip={full_tooltip}>
@@ -286,7 +289,7 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
                                 </div>
                             }
                         })}
-                        <div class="register-entry" data-tooltip={format!("Program counter = {}", state.pc)}>
+                        <div class="register-entry" data-tooltip="Program counter">
                             <span class="reg-name">{"PC"}</span>
                             <span class="reg-value">{format!("0x{:06X}", state.pc)}</span>
                         </div>
