@@ -2,6 +2,7 @@
 ; Pipeline: Rust -> rustc (msp430-none-elf) -> MSP430 ASM -> COR24 ASM
 
 ; Reset vector -> start
+    mov     fp, sp
     la      r0, start
     jmp     (r0)
 
@@ -97,8 +98,8 @@ level_b:
 
 ; --- function: level_c ---
 level_c:
-    lw      r0, 18(fp)
-    push    r0
+    lw      r1, 18(fp)
+    push    r1
     sw      r1, 18(fp)
     mov     r1, r0
     la      r0, 0xFF0000
@@ -121,14 +122,14 @@ level_c:
 
 ; --- function: mmio_read ---
 mmio_read:
-    lw      r0, 0(r0)
+    lbu      r0, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end5:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sw      r1, 0(r0)
+    sb      r1, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end6:
@@ -147,13 +148,8 @@ start:
 uart_putc:
     mov     r1, r0
     la      r0, 0xFF0100
-    ; call mmio_write
-    la      r2, .Lret_13
-    push    r2
+    ; tail call mmio_write
     la      r2, mmio_write
-    jmp     (r2)
-    .Lret_13:
-    pop     r2
     jmp     (r2)
 .Lfunc_end8:
 

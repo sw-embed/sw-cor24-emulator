@@ -42,23 +42,26 @@ demo_fibonacci:
 	.p2align	1
 	.type	fibonacci,@function
 fibonacci:
-	cmp	#2, r12
-	jhs	.LBB2_2
-	mov	r12, r13
-	jmp	.LBB2_4
+	push	r9
+	push	r10
+	mov	r12, r9
+	mov	#1, r10
+	cmp	#2, r9
+	jlo	.LBB2_4
+	clr	r10
 .LBB2_2:
-	mov	#1, r14
-	clr	r15
-.LBB2_3:
-	mov	r14, r13
-	mov	r15, r14
-	add	r13, r14
+	mov	r9, r12
 	add	#-1, r12
-	tst	r12
-	mov	r13, r15
-	jne	.LBB2_3
+	call	#fibonacci
+	add	r12, r10
+	add	#-2, r9
+	cmp	#2, r9
+	jhs	.LBB2_2
+	inc	r10
 .LBB2_4:
-	mov	r13, r12
+	mov	r10, r12
+	pop	r10
+	pop	r9
 	ret
 .Lfunc_end2:
 	.size	fibonacci, .Lfunc_end2-fibonacci
@@ -68,7 +71,7 @@ fibonacci:
 	.p2align	1
 	.type	mmio_write,@function
 mmio_write:
-	mov	r13, 0(r12)
+	mov.b	r13, 0(r12)
 	ret
 .Lfunc_end3:
 	.size	mmio_write, .Lfunc_end3-mmio_write

@@ -37,7 +37,7 @@ demo_add:
 	.p2align	1
 	.type	mmio_write,@function
 mmio_write:
-	mov	r13, 0(r12)
+	mov.b	r13, 0(r12)
 	ret
 .Lfunc_end2:
 	.size	mmio_write, .Lfunc_end2-mmio_write

@@ -173,6 +173,22 @@ pub fn translate_msp430(msp_asm: &str, entry_point: &str) -> Result<String> {
                     i = skip_to_ret(&lines, i) + 1;
                     continue;
                 }
+                // Compare look-ahead: cmp followed by jeq/jne needs ceq, not clu
+                if inst.mnemonic == "cmp" {
+                    let use_ceq = is_followed_by_equality_branch(&lines, i);
+                    match translate_cmp(&inst.operands, inst.byte_mode, use_ceq) {
+                        Ok(cor24_lines) => {
+                            for cl in cor24_lines {
+                                out.push_str(&format!("    {}\n", cl));
+                            }
+                        }
+                        Err(e) => {
+                            out.push_str(&format!("    ; TODO: {} ({})\n", inst.mnemonic, e));
+                        }
+                    }
+                    i += 1;
+                    continue;
+                }
                 match translate_instruction(inst, &mut call_label_counter) {
                     Ok(cor24_lines) => {
                         for cl in cor24_lines {
@@ -297,11 +313,11 @@ fn translate_instruction(inst: &MspInst, call_counter: &mut usize) -> Result<Vec
         "xor" => translate_binary_op("xor", ops, inst.byte_mode),
 
         // --- Moves ---
-        "mov" => translate_mov(ops),
+        "mov" => translate_mov(ops, inst.byte_mode),
         "clr" => translate_clr(ops),
 
         // --- Compare ---
-        "cmp" => translate_cmp(ops, inst.byte_mode),
+        "cmp" => translate_cmp(ops, inst.byte_mode, false),
         "tst" => translate_tst(ops),
         "bit" => translate_bit(ops),
 
@@ -550,7 +566,7 @@ fn translate_bic(ops: &[MspOperand]) -> Result<Vec<String>> {
 }
 
 /// Translate MOV instruction - covers many MSP430 patterns
-fn translate_mov(ops: &[MspOperand]) -> Result<Vec<String>> {
+fn translate_mov(ops: &[MspOperand], byte_mode: bool) -> Result<Vec<String>> {
     if ops.len() != 2 {
         bail!("mov requires 2 operands");
     }
@@ -596,7 +612,7 @@ fn translate_mov(ops: &[MspOperand]) -> Result<Vec<String>> {
                 load_immediate(&mut result, &d_raw, mapped_imm);
             }
         }
-        // mov Rsrc, offset(Rdst) -> store word
+        // mov Rsrc, offset(Rdst) -> store word/byte
         (MspOperand::Register(src), MspOperand::Indexed(off, dst)) => {
             let s_raw = map_register(*src)?;
             let s = if is_spill(&s_raw) {
@@ -606,33 +622,37 @@ fn translate_mov(ops: &[MspOperand]) -> Result<Vec<String>> {
                 s_raw
             };
             let d = map_base_register(*dst, &mut result, &s)?;
-            result.push(format!("sw      {}, {}({})", s, off, d));
+            let store_op = if byte_mode { "sb" } else { "sw" };
+            result.push(format!("{}      {}, {}({})", store_op, s, off, d));
         }
-        // mov offset(Rsrc), Rdst -> load word
+        // mov offset(Rsrc), Rdst -> load word/byte
         (MspOperand::Indexed(off, src), MspOperand::Register(dst)) => {
             let d_raw_preview = map_register(*dst)?;
             let avoid = if is_spill(&d_raw_preview) { "r0" } else { &d_raw_preview };
             let s = map_base_register(*src, &mut result, avoid)?;
             let d_raw = map_register(*dst)?;
+            let load_op = if byte_mode { "lbu" } else { "lw" };
             if is_spill(&d_raw) {
-                result.push(format!("lw      r0, {}({})", off, s));
+                result.push(format!("{}      r0, {}({})", load_op, off, s));
                 store_spill(&mut result, &d_raw, "r0");
             } else {
-                result.push(format!("lw      {}, {}({})", d_raw, off, s));
+                result.push(format!("{}      {}, {}({})", load_op, d_raw, off, s));
             }
         }
         // mov @Rsrc, Rdst -> load indirect
         (MspOperand::Indirect(src), MspOperand::Register(dst)) => {
             let s = map_register(*src)?;
             let d = map_register(*dst)?;
-            result.push(format!("lw      {}, 0({})", d, s));
+            let load_op = if byte_mode { "lbu" } else { "lw" };
+            result.push(format!("{}      {}, 0({})", load_op, d, s));
         }
         // mov #imm, offset(Rdst) -> store immediate to memory
         (MspOperand::Immediate(imm), MspOperand::Indexed(off, dst)) => {
             let d = map_register(*dst)?;
             let tmp = temp_reg(&d);
             load_immediate(&mut result, &tmp, *imm);
-            result.push(format!("sw      {}, {}({})", tmp, off, d));
+            let store_op = if byte_mode { "sb" } else { "sw" };
+            result.push(format!("{}      {}, {}({})", store_op, tmp, off, d));
         }
         // mov #symbol, Rdst -> load address
         (MspOperand::Symbol(sym), MspOperand::Register(dst)) => {
@@ -668,7 +688,7 @@ fn translate_clr(ops: &[MspOperand]) -> Result<Vec<String>> {
 ///
 /// COR24 ceq constraints: only (r0,r1), (r0,r2), (r0,z), (r1,r2), (r1,z), (r2,z)
 /// COR24 clu constraints: all combos of r0,r1,r2 + (z,r0), (z,r1), (z,r2)
-fn translate_cmp(ops: &[MspOperand], byte_mode: bool) -> Result<Vec<String>> {
+fn translate_cmp(ops: &[MspOperand], byte_mode: bool, use_ceq: bool) -> Result<Vec<String>> {
     if ops.len() != 2 {
         bail!("cmp requires 2 operands");
     }
@@ -698,8 +718,16 @@ fn translate_cmp(ops: &[MspOperand], byte_mode: bool) -> Result<Vec<String>> {
                 let w = if dst == "r0" { "r1" } else { "r0" };
                 result.push(format!("push    {}", w));
                 load_spill(&mut result, &src_raw, w);
-                result.push(format!("clu     {}, {}", dst, w));
+                if use_ceq {
+                    let (a, b) = order_ceq_operands(&dst, w);
+                    result.push(format!("ceq     {}, {}", a, b));
+                } else {
+                    result.push(format!("clu     {}, {}", dst, w));
+                }
                 result.push(format!("pop     {}", w));
+            } else if use_ceq {
+                let (a, b) = order_ceq_operands(&dst, &src_raw);
+                result.push(format!("ceq     {}, {}", a, b));
             } else {
                 result.push(format!("clu     {}, {}", dst, src_raw));
             }
@@ -707,15 +735,17 @@ fn translate_cmp(ops: &[MspOperand], byte_mode: bool) -> Result<Vec<String>> {
         MspOperand::Immediate(imm) => {
             if *imm == 0 {
                 result.push(format!("ceq     {}, z", dst));
-            } else if *imm == -1 {
-                let tmp = temp_reg(&dst);
-                load_immediate(&mut result, &tmp, *imm);
-                let (a, b) = order_ceq_operands(&dst, &tmp);
-                result.push(format!("ceq     {}, {}", a, b));
             } else {
                 let tmp = temp_reg(&dst);
+                result.push(format!("push    {}", tmp));
                 load_immediate(&mut result, &tmp, *imm);
-                result.push(format!("clu     {}, {}", dst, tmp));
+                if use_ceq || *imm == -1 {
+                    let (a, b) = order_ceq_operands(&dst, &tmp);
+                    result.push(format!("ceq     {}, {}", a, b));
+                } else {
+                    result.push(format!("clu     {}, {}", dst, tmp));
+                }
+                result.push(format!("pop     {}", tmp));
             }
         }
         _ => bail!("unsupported cmp source"),
@@ -897,6 +927,21 @@ fn is_followed_by_ret(lines: &[MspLine], call_idx: usize) -> bool {
         match &lines[j] {
             MspLine::Comment(_) => continue,
             MspLine::Instruction(inst) if inst.mnemonic == "ret" => return true,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Check if a `cmp` is followed by `jeq`/`jne` (equality branch, needs ceq)
+/// vs `jhs`/`jlo` (unsigned branch, needs clu).
+fn is_followed_by_equality_branch(lines: &[MspLine], cmp_idx: usize) -> bool {
+    for j in (cmp_idx + 1)..lines.len() {
+        match &lines[j] {
+            MspLine::Comment(_) => continue,
+            MspLine::Instruction(inst) => {
+                return matches!(inst.mnemonic.as_str(), "jeq" | "jne" | "jz" | "jnz");
+            }
             _ => return false,
         }
     }
@@ -1716,5 +1761,68 @@ add:
         assert_eq!(cpu.pc, start_addr,
             "After executing prologue, PC should be at start (0x{:06X}), got 0x{:06X}",
             start_addr, cpu.pc);
+    }
+
+    /// Echo v2: Rust logic + asm!() interrupt plumbing.
+    /// Translates, assembles, runs, sends a/b/c → verifies A/B/C, sends ! → verifies halt.
+    #[test]
+    fn test_echo_v2_rust_logic() {
+        use cor24_emulator::assembler::Assembler;
+        use cor24_emulator::cpu::state::CpuState;
+        use cor24_emulator::cpu::executor::Executor;
+
+        let msp430_src = include_str!("../demos/demo_echo_v2/demo_echo_v2.msp430.s");
+        let cor24 = translate_msp430(msp430_src, "start").unwrap();
+
+        let mut asm = Assembler::new();
+        let result = asm.assemble(&cor24);
+        assert!(result.errors.is_empty(), "Assembly errors: {:?}\nCOR24:\n{}", result.errors, cor24);
+
+        let mut cpu = CpuState::new();
+        for line in &result.lines {
+            for (i, &b) in line.bytes.iter().enumerate() {
+                cpu.write_byte(line.address + i as u32, b);
+            }
+        }
+        cpu.pc = 0;
+        let executor = Executor::new();
+
+        // Run to prompt
+        executor.run(&mut cpu, 10_000);
+        assert_eq!(cpu.io.uart_output, "?", "Prompt should appear");
+        assert!(!cpu.halted, "Should not be halted yet");
+
+        // Send 'a' → 'A'
+        cpu.uart_send_rx(b'a');
+        executor.run(&mut cpu, 10_000);
+        assert_eq!(cpu.io.uart_output, "?A", "'a' -> 'A'");
+
+        // Send 'b' → 'B'
+        cpu.uart_send_rx(b'b');
+        executor.run(&mut cpu, 10_000);
+        assert_eq!(cpu.io.uart_output, "?AB", "'b' -> 'B'");
+
+        // Send 'c' → 'C'
+        cpu.uart_send_rx(b'c');
+        executor.run(&mut cpu, 10_000);
+        assert_eq!(cpu.io.uart_output, "?ABC", "'c' -> 'C'");
+
+        // Send '3' → '3' (digit, as-is)
+        cpu.uart_send_rx(b'3');
+        executor.run(&mut cpu, 10_000);
+        assert_eq!(cpu.io.uart_output, "?ABC3", "'3' -> '3'");
+
+        // Send '!' → halt
+        cpu.uart_send_rx(b'!');
+        executor.run(&mut cpu, 10_000);
+        assert!(cpu.halted, "Should halt on '!'");
+
+        // Dump state
+        eprintln!("=== Echo v2 final state ===");
+        eprintln!("PC: 0x{:06X}  Halted: {}", cpu.pc, cpu.halted);
+        eprintln!("Registers: r0=0x{:06X} r1=0x{:06X} r2=0x{:06X}",
+            cpu.registers[0], cpu.registers[1], cpu.registers[2]);
+        eprintln!("  fp=0x{:06X} sp=0x{:06X}", cpu.registers[3], cpu.registers[4]);
+        eprintln!("UART output: {:?}", cpu.io.uart_output);
     }
 }

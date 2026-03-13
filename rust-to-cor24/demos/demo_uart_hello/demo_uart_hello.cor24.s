@@ -2,6 +2,7 @@
 ; Pipeline: Rust -> rustc (msp430-none-elf) -> MSP430 ASM -> COR24 ASM
 
 ; Reset vector -> start
+    mov     fp, sp
     la      r0, start
     jmp     (r0)
 
@@ -103,7 +104,7 @@ demo_uart_hello:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sw      r1, 0(r0)
+    sb      r1, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end2:
@@ -122,13 +123,8 @@ start:
 uart_putc:
     mov     r1, r0
     la      r0, 0xFF0100
-    ; call mmio_write
-    la      r2, .Lret_13
-    push    r2
+    ; tail call mmio_write
     la      r2, mmio_write
-    jmp     (r2)
-    .Lret_13:
-    pop     r2
     jmp     (r2)
 .Lfunc_end4:
 

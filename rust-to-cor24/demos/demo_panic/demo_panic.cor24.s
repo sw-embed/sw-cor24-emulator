@@ -84,7 +84,7 @@ emit_panic:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sw      r1, 0(r0)
+    sb      r1, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end3:

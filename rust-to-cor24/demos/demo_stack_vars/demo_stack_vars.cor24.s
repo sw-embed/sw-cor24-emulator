@@ -2,6 +2,7 @@
 ; Pipeline: Rust -> rustc (msp430-none-elf) -> MSP430 ASM -> COR24 ASM
 
 ; Reset vector -> start
+    mov     fp, sp
     la      r0, start
     jmp     (r0)
 
@@ -55,53 +56,87 @@ _RNvCsgMG9zBUy57e_7___rustc17rust_begin_unwind:
 
 ; --- function: accumulate ---
 accumulate:
-    lw      r0, 6(fp)
-    push    r0
-    lw      r0, 9(fp)
-    push    r0
-    lw      r0, 12(fp)
-    push    r0
-    lw      r0, 15(fp)
-    push    r0
-    lw      r0, 18(fp)
-    push    r0
+    lw      r1, 6(fp)
+    push    r1
+    lw      r1, 9(fp)
+    push    r1
+    lw      r1, 12(fp)
+    push    r1
+    lw      r1, 15(fp)
+    push    r1
+    lw      r1, 18(fp)
+    push    r1
     sw      r0, 18(fp)
+    push    r0
     lw      r0, 18(fp)
     sw      r0, 6(fp)
+    pop     r0
+    push    r0
     lw      r0, 6(fp)
     add     r0, 1
     sw      r0, 6(fp)
+    pop     r0
+    push    r0
     lw      r0, 18(fp)
+    push    r1
     lw      r1, 6(fp)
     add     r0, r1
+    pop     r1
     sw      r0, 18(fp)
+    pop     r0
+    push    r0
     lw      r0, 18(fp)
     sw      r0, 15(fp)
+    pop     r0
+    push    r0
     lw      r0, 15(fp)
+    push    r1
     lw      r1, 6(fp)
     add     r0, r1
+    pop     r1
     sw      r0, 15(fp)
+    pop     r0
     lw      r1, 18(fp)
+    push    r0
     lw      r0, 6(fp)
     xor     r1, r0
+    pop     r0
+    push    r0
     lw      r0, 15(fp)
     xor     r1, r0
+    pop     r0
+    push    r0
     lw      r0, 15(fp)
     sw      r0, 12(fp)
+    pop     r0
+    push    r0
     lw      r0, 12(fp)
+    push    r1
     lw      r1, 18(fp)
     add     r0, r1
+    pop     r1
     sw      r0, 12(fp)
+    pop     r0
+    push    r0
     lw      r0, 12(fp)
     xor     r1, r0
+    pop     r0
+    push    r0
     lw      r0, 12(fp)
     sw      r0, 9(fp)
+    pop     r0
+    push    r0
     lw      r0, 9(fp)
+    push    r1
     lw      r1, 15(fp)
     add     r0, r1
+    pop     r1
     sw      r0, 9(fp)
+    pop     r0
+    push    r0
     lw      r0, 9(fp)
     xor     r1, r0
+    pop     r0
     la      r0, 0xFF0000
     ; call mmio_write
     la      r2, .Lret_6
@@ -168,14 +203,14 @@ demo_stack_vars:
 
 ; --- function: mmio_read ---
 mmio_read:
-    lw      r0, 0(r0)
+    lbu      r0, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end3:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sw      r1, 0(r0)
+    sb      r1, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end4:
@@ -194,13 +229,8 @@ start:
 uart_putc:
     mov     r1, r0
     la      r0, 0xFF0100
-    ; call mmio_write
-    la      r2, .Lret_15
-    push    r2
+    ; tail call mmio_write
     la      r2, mmio_write
-    jmp     (r2)
-    .Lret_15:
-    pop     r2
     jmp     (r2)
 .Lfunc_end6:
 

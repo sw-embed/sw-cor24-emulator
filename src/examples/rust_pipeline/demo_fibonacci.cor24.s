@@ -88,8 +88,10 @@ fibonacci:
     pop     r0
     push    r0
     lw      r0, 15(fp)
+    push    r1
     lc      r1, 2
     clu     r0, r1
+    pop     r1
     pop     r0
     brt     .LBB2_4
     push    r0
@@ -117,8 +119,10 @@ fibonacci:
     pop     r0
     push    r0
     lw      r0, 15(fp)
+    push    r1
     lc      r1, 2
     clu     r0, r1
+    pop     r1
     pop     r0
     brf     .LBB2_2
     push    r0
@@ -138,7 +142,7 @@ fibonacci:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sw      r1, 0(r0)
+    sb      r1, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end3:

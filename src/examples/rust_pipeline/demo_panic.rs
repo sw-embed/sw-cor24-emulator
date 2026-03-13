@@ -14,7 +14,7 @@ const UART_DATA: u16 = 0xFF01;
 #[inline(never)]
 #[no_mangle]
 pub unsafe fn mmio_write(addr: u16, val: u16) {
-    core::ptr::write_volatile(addr as *mut u16, val);
+    core::ptr::write_volatile(addr as *mut u8, val as u8);
 }
 
 #[inline(never)]

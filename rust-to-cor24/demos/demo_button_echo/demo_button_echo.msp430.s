@@ -43,7 +43,7 @@ demo_button_echo:
 	.p2align	1
 	.type	mmio_read,@function
 mmio_read:
-	mov	0(r12), r12
+	mov.b	0(r12), r12
 	ret
 .Lfunc_end2:
 	.size	mmio_read, .Lfunc_end2-mmio_read
@@ -53,7 +53,7 @@ mmio_read:
 	.p2align	1
 	.type	mmio_write,@function
 mmio_write:
-	mov	r13, 0(r12)
+	mov.b	r13, 0(r12)
 	ret
 .Lfunc_end3:
 	.size	mmio_write, .Lfunc_end3-mmio_write

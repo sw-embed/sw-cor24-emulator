@@ -1,0 +1,43 @@
+Assembled 101 bytes
+Running (speed: max IPS, time limit: 2s)...
+
+[UART TX @ 10000] '?'  (0x3F)
+
+UART output: ?
+
+Executed 314430000 instructions
+
+=== Registers ===
+  PC:  0x000058    C: 0
+  r0:  0x000000  (       0)
+  r1:  0xFF0010  (16711696)
+  r2:  0x00004B  (      75)
+  fp:  0xFEEC00
+  sp:  0xFEEC00
+
+=== Emulator ===
+  Instructions: 314430000
+  Halted: false
+
+=== SRAM 000000-0FFFFF (1 MB) ===
+  000000: 65 29 3F 00 00 26 7D 7E 7F 64 7F 2A 00 01 FF 2D  |e)?..&}~.d.*...-|
+  000010: 00 5E 44 21 17 15 20 44 61 23 15 0F 44 7B 23 14  |.^D!.. Da#..D{#.|
+  000020: 0A 57 45 DF 0D 2A 00 01 FF 81 00 13 04 2A 00 01  |.WE..*.......*..|
+  000030: FF 88 00 7B D0 7B 7A 79 68 13 FC 84 00 7B 28 44  |...{.{zyh....{(D|
+  000040: 3F 2B 4B 00 00 7F 2B 5B 00 00 28 29 06 00 00 67  |?+K...+[..()...g|
+  000050: 44 01 2A 10 00 FF 81 00 00 13 FB 5A 29 00 01 FF  |D.*........Z)...|
+  000060: 2B 3B 00 00 28 00 00 00 00 00 00 00 00 00 00 00  |+;..(...........|
+  000070..0FFFFF: 1048464 bytes all zero
+
+=== Unmapped 100000-FEDDFF (14.9 MB, not installed) ===
+
+=== EBR FEE000-FEFFFF (8 KB, stack) ===
+  FEE000..FEEBEF: 3056 bytes all zero
+  FEEBF0: 00 00 00 00 00 00 00 00 00 00 00 00 00 4B 00 00  |.............K..|
+  FEEC00..FEFFFF: 5120 bytes all zero
+
+=== I/O FF0000-FFFFFF (64 KB, memory-mapped peripherals) ===
+  FF0000 LED:  0x00  [........]  BTN S2: released
+  FF0010 IntEn:  0x01  UART RX IRQ: enabled
+  FF0100 UART:   status=0x02  RX ready: no  CTS: yes  TX busy: no
+  UART TX log:   "?"

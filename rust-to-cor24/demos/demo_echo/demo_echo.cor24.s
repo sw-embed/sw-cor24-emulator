@@ -47,7 +47,7 @@ do_halt:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sw      r1, 0(r0)
+    sb      r1, 0(r0)
     pop     r2
     jmp     (r2)
 .Lfunc_end1:
@@ -80,5 +80,4 @@ uart_putc:
     la      r2, mmio_write
     jmp     (r2)
 .Lfunc_end3:
-
 

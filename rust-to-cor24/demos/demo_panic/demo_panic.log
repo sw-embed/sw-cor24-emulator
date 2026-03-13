@@ -1,0 +1,52 @@
+Assembled 140 bytes
+Running (speed: max IPS, time limit: 5s)...
+
+LEDs: ○○○○○○○[91m●[0m  (0x01)  [UART TX @ 92] 'P'  (0x50)
+[UART TX @ 92] 'A'  (0x41)
+[UART TX @ 92] 'N'  (0x4E)
+[UART TX @ 92] 'I'  (0x49)
+[UART TX @ 92] 'C'  (0x43)
+[UART TX @ 92] '\n'
+
+UART output: PANIC
+
+
+Executed 92 instructions
+CPU halted (self-branch detected)
+
+=== Registers ===
+  PC:  0x000072    C: 0
+  r0:  0xFF0100  (16711936)
+  r1:  0x00000A  (      10)
+  r2:  0x000072  (     114)
+  fp:  0xFEEC00
+  sp:  0xFEEBFA
+
+=== Emulator ===
+  Instructions: 92
+  Halted: true
+
+=== SRAM 000000-0FFFFF (1 MB) ===
+  000000: 65 29 78 00 00 26 2B 10 00 00 7F 2B 2A 00 00 28  |e)x..&+....+*..(|
+  000010: 29 00 00 FF 45 01 2B 20 00 00 7F 2B 74 00 00 28  |)...E.+ ...+t..(|
+  000020: 2B 2A 00 00 7F 2B 2A 00 00 28 44 50 2B 36 00 00  |+*...+*..(DP+6..|
+  000030: 7F 2B 82 00 00 28 44 41 2B 42 00 00 7F 2B 82 00  |.+...(DA+B...+..|
+  000040: 00 28 44 4E 2B 4E 00 00 7F 2B 82 00 00 28 44 49  |.(DN+N...+...(DI|
+  000050: 2B 5A 00 00 7F 2B 82 00 00 28 44 43 2B 66 00 00  |+Z...+...(DC+f..|
+  000060: 7F 2B 82 00 00 28 44 0A 2B 72 00 00 7F 2B 82 00  |.+...(D.+r...+..|
+  000070: 00 28 13 FC 84 00 7B 28 2B 82 00 00 7F 2B 10 00  |.(....{(+....+..|
+  000080: 00 28 5A 29 00 01 FF 2B 74 00 00 28 00 00 00 00  |.(Z)...+t..(....|
+  000090..0FFFFF: 1048432 bytes all zero
+
+=== Unmapped 100000-FEDDFF (14.9 MB, not installed) ===
+
+=== EBR FEE000-FEFFFF (8 KB, stack) ===
+  FEE000..FEEBEF: 3056 bytes all zero
+  FEEBF0: 00 00 00 00 00 00 00 72 00 00 2A 00 00 82 00 00  |.......r..*.....|
+  FEEC00..FEFFFF: 5120 bytes all zero
+
+=== I/O FF0000-FFFFFF (64 KB, memory-mapped peripherals) ===
+  FF0000 LED:  0x01  [.......*]  BTN S2: released
+  FF0010 IntEn:  0x00  UART RX IRQ: disabled
+  FF0100 UART:   status=0x02  RX ready: no  CTS: yes  TX busy: no
+  UART TX log:   "PANIC\n"
