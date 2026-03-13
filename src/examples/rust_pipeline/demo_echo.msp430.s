@@ -1,4 +1,24 @@
-	.file	"demo_echo.ba9e214e17d3d37e-cgu.0"
+	.file	"demo_echo_v2.1a366a591b9a8cc1-cgu.0"
+	.section	.text.handle_rx,"ax",@progbits
+	.globl	handle_rx
+	.p2align	1
+	.type	handle_rx,@function
+handle_rx:
+	mov	#-255, r12
+	call	#mmio_read
+	cmp	#33, r12
+	jne	.LBB0_2
+	mov	#256, r12
+	mov	#1, r13
+	call	#mmio_write
+	ret
+.LBB0_2:
+	call	#to_upper
+	call	#uart_putc
+	ret
+.Lfunc_end0:
+	.size	handle_rx, .Lfunc_end0-handle_rx
+
 	.section	.text.isr_handler,"ax",@progbits
 	.globl	isr_handler
 	.p2align	1
@@ -10,39 +30,28 @@ isr_handler:
 	; @cor24: push r2
 	; @cor24: mov r2, c
 	; @cor24: push r2
-	; @cor24: la r1, 0xFF0100
-	; @cor24: lb r0, 0(r1)
-	; @cor24: mov r2, r0
-	; @cor24: lc r0, 0x21
-	; @cor24: ceq r0, r2
-	; @cor24: brt do_halt
-	; @cor24: lc r0, 0x61
-	; @cor24: clu r2, r0
-	; @cor24: brt not_lower
-	; @cor24: lc r0, 0x7B
-	; @cor24: clu r2, r0
-	; @cor24: brf not_lower
-	; @cor24: mov r0, r2
-	; @cor24: lc r1, 0xDF
-	; @cor24: and r0, r1
-	; @cor24: la r1, 0xFF0100
-	; @cor24: sb r0, 0(r1)
-	; @cor24: bra isr_done
-	; @cor24: not_lower:
-	; @cor24: la r1, 0xFF0100
-	; @cor24: sb r2, 0(r1)
-	; @cor24: isr_done:
+	;NO_APP
+	call	#handle_rx
+	;APP
 	; @cor24: pop r2
 	; @cor24: clu z, r2
 	; @cor24: pop r2
 	; @cor24: pop r1
 	; @cor24: pop r0
 	; @cor24: jmp (ir)
-	; @cor24: do_halt:
-	; @cor24: bra do_halt
 	;NO_APP
-.Lfunc_end0:
-	.size	isr_handler, .Lfunc_end0-isr_handler
+.Lfunc_end1:
+	.size	isr_handler, .Lfunc_end1-isr_handler
+
+	.section	.text.mmio_read,"ax",@progbits
+	.globl	mmio_read
+	.p2align	1
+	.type	mmio_read,@function
+mmio_read:
+	mov.b	0(r12), r12
+	ret
+.Lfunc_end2:
+	.size	mmio_read, .Lfunc_end2-mmio_read
 
 	.section	.text.mmio_write,"ax",@progbits
 	.globl	mmio_write
@@ -51,8 +60,8 @@ isr_handler:
 mmio_write:
 	mov.b	r13, 0(r12)
 	ret
-.Lfunc_end1:
-	.size	mmio_write, .Lfunc_end1-mmio_write
+.Lfunc_end3:
+	.size	mmio_write, .Lfunc_end3-mmio_write
 
 	.section	.text.start,"ax",@progbits
 	.globl	start
@@ -64,20 +73,42 @@ start:
 	;APP
 	; @cor24: la r0, isr_handler
 	; @cor24: mov r6, r0
-	;NO_APP
-	;APP
 	; @cor24: lc r0, 1
 	; @cor24: la r1, 0xFF0010
 	; @cor24: sb r0, 0(r1)
 	;NO_APP
-.LBB2_1:
+.LBB4_1:
+	mov	#256, r12
+	call	#mmio_read
+	tst	r12
+	jne	.LBB4_3
 	;APP
 	nop
 
 	;NO_APP
-	jmp	.LBB2_1
-.Lfunc_end2:
-	.size	start, .Lfunc_end2-start
+	jmp	.LBB4_1
+.LBB4_3:
+	;APP
+	; @cor24: halted:
+	; @cor24: bra halted
+	;NO_APP
+.Lfunc_end4:
+	.size	start, .Lfunc_end4-start
+
+	.section	.text.to_upper,"ax",@progbits
+	.globl	to_upper
+	.p2align	1
+	.type	to_upper,@function
+to_upper:
+	mov	r12, r13
+	add	#-97, r13
+	cmp	#26, r13
+	jhs	.LBB5_2
+	and	#95, r12
+.LBB5_2:
+	ret
+.Lfunc_end5:
+	.size	to_upper, .Lfunc_end5-to_upper
 
 	.section	.text.uart_putc,"ax",@progbits
 	.globl	uart_putc
@@ -88,8 +119,8 @@ uart_putc:
 	mov	#-255, r12
 	call	#mmio_write
 	ret
-.Lfunc_end3:
-	.size	uart_putc, .Lfunc_end3-uart_putc
+.Lfunc_end6:
+	.size	uart_putc, .Lfunc_end6-uart_putc
 
 	.ident	"rustc version 1.93.0-nightly (c871d09d1 2025-11-24)"
 	.ident	"rustc version 1.93.0-nightly (c871d09d1 2025-11-24)"

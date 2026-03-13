@@ -755,7 +755,7 @@ mod tests {
         assert!(emu.is_halted(), "Should halt on '!'");
     }
 
-    /// Test echo via the Rust pipeline COR24 output (asm!() passthrough)
+    /// Test echo via the Rust pipeline COR24 output (Rust logic + asm!() interrupt plumbing)
     #[test]
     fn test_echo_rust_pipeline() {
         use crate::assembler::Assembler;
@@ -782,25 +782,31 @@ mod tests {
         }
 
         // Init — prompt
-        run_tick(&mut emu, 500);
+        run_tick(&mut emu, 1000);
         assert_eq!(emu.get_uart_output(), "?", "Prompt should appear");
 
         // Send 'a', 'b', 'c' → expect 'A', 'B', 'C'
+        // v2 uses Rust logic (to_upper, handle_rx) so needs more cycles per character
         emu.send_uart_byte(b'a');
-        run_tick(&mut emu, 500);
+        run_tick(&mut emu, 10_000);
         assert_eq!(emu.get_uart_output(), "?A", "'a' -> 'A'");
 
         emu.send_uart_byte(b'b');
-        run_tick(&mut emu, 500);
+        run_tick(&mut emu, 10_000);
         assert_eq!(emu.get_uart_output(), "?AB", "'b' -> 'B'");
 
         emu.send_uart_byte(b'c');
-        run_tick(&mut emu, 500);
+        run_tick(&mut emu, 10_000);
         assert_eq!(emu.get_uart_output(), "?ABC", "'c' -> 'C'");
 
-        // Send '!' → halts
+        // Send '3' → echoed as-is (non-letter)
+        emu.send_uart_byte(b'3');
+        run_tick(&mut emu, 10_000);
+        assert_eq!(emu.get_uart_output(), "?ABC3", "'3' -> '3'");
+
+        // Send '!' → sets halt flag, main loop detects and halts
         emu.send_uart_byte(b'!');
-        run_tick(&mut emu, 500);
+        run_tick(&mut emu, 10_000);
         assert!(emu.is_halted(), "Should halt on '!'");
     }
 }
