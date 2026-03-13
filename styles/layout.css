@@ -14,7 +14,7 @@
     gap: 8px;
     flex: 1;
     overflow: hidden;
-    margin-left: 160px; /* Space for fixed sidebar */
+    margin-left: 110px; /* Space for fixed sidebar */
 }
 
 .app-footer {
