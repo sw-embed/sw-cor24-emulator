@@ -15,7 +15,7 @@ _RNvCsgMG9zBUy57e_7___rustc17rust_begin_unwind:
 	.type	demo_panic,@function
 demo_panic:
 	mov	#-256, r12
-	mov	#222, r13
+	mov	#1, r13
 	call	#mmio_write
 	call	#emit_panic
 .Lfunc_end1:

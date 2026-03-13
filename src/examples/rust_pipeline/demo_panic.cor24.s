@@ -19,7 +19,7 @@ _RNvCsgMG9zBUy57e_7___rustc17rust_begin_unwind:
 ; --- function: demo_panic ---
 demo_panic:
     la      r0, 0xFF0000
-    la      r1, 0x0000DE
+    lc      r1, 1
     ; call mmio_write
     la      r2, .Lret_1
     push    r2

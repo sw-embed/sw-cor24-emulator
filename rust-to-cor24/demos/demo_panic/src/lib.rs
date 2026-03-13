@@ -1,6 +1,6 @@
 //! Demo: Panic Handler
 //! Demonstrates the panic handler output on UART.
-//! Normal code runs first (writes 0xDE to LED), then triggers a panic
+//! Normal code runs first (turns on LED), then triggers a panic
 //! which prints "PANIC\n" to UART and halts.
 //! Note: panic!() macro pulls in core::panicking which is too expensive
 //! for our pipeline (no linker), so we trigger the handler directly.
@@ -42,7 +42,7 @@ pub unsafe fn emit_panic() -> ! {
 #[inline(never)]
 #[no_mangle]
 pub unsafe fn demo_panic() -> ! {
-    mmio_write(LED_ADDR, 0xDE);  // LED shows we got here
+    mmio_write(LED_ADDR, 1);     // Turn on LED D2 (bit 0)
     emit_panic();                 // trigger panic output on UART
 }
 

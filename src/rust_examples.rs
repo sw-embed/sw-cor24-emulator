@@ -65,7 +65,7 @@ pub fn get_rust_examples() -> Vec<RustExample> {
         ),
         example(
             "Panic Handler",
-            "Writes 0xDE to LED, prints PANIC to UART, halts",
+            "Turns on LED, prints PANIC to UART, halts",
             include_str!("examples/rust_pipeline/demo_panic.rs"),
             include_str!("examples/rust_pipeline/demo_panic.msp430.s"),
             include_str!("examples/rust_pipeline/demo_panic.cor24.s"),
