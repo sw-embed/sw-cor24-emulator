@@ -26,6 +26,16 @@ cargo clippy --target wasm32-unknown-unknown  # lint check
 
 Prerequisites: Rust 1.75+, Trunk (`cargo install trunk`), `rustup target add wasm32-unknown-unknown`.
 
+## Commit Discipline
+
+**Commit early and often.** Each commit should do one thing. Do not accumulate large changesets.
+
+- Commit after each logical change: a bug fix, a new feature, a refactor, an extraction — each is its own commit.
+- Small commits enable cherry-picking, rebasing, and bisecting. Large commits make all of these painful.
+- If a task involves multiple steps (e.g., extract data to files, then update callers, then add a new feature), commit after each step.
+- Commit working code. Run `cargo check --target wasm32-unknown-unknown` before committing WASM changes.
+- Deployment commits (`pages/` updates via `./build.sh`) should be separate from code changes when practical.
+
 ## Deployment
 
 The `pages/` directory contains pre-built production assets and is committed to git. GitHub Actions deploys from `pages/` on push to `main` — no CI build step, just upload. After `./build.sh`, commit the updated `pages/` directory to deploy.
