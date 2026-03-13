@@ -1,8 +1,9 @@
 ; UART Echo: Interrupt-driven character echo
-; Lowercase letters: prints uppercase then lowercase (a->Aa, b->Bb)
-; Everything else: echoes as-is (1->1, ?->?, B->B)
+; Letters (a-z, A-Z): echoes uppercase (a->A, B->B)
+; '!' halts the program
+; Everything else: echoes as-is (1->1, ?->?)
 ;
-; Usage: Assemble & Run, then click the UART RX input and type.
+; Usage: Assemble & Run, then type in the UART RX input.
 ; Each keystroke triggers an interrupt that echoes to UART TX.
 
 ; --- Setup interrupt vector ---
@@ -35,29 +36,32 @@ isr:
         la      r1, 0xFF0100
         lb      r0, 0(r1)      ; r0 = received character
 
+        ; Check for '!' (0x21) -> halt
+        mov     r2, r0
+        lc      r0, 0x21
+        ceq     r0, r2
+        brt     do_halt
+
         ; Check if lowercase letter: 'a'-'z' (0x61-0x7A)
-        lc      r2, 0x61        ; 'a'
-        clu     r0, r2          ; char < 'a'?
+        lc      r0, 0x61        ; 'a'
+        clu     r2, r0          ; char < 'a'?
         brt     not_lower       ; yes -> not lowercase
-        lc      r2, 0x7B        ; 'z'+1
-        clu     r0, r2          ; char < 'z'+1?
+        lc      r0, 0x7B        ; 'z'+1
+        clu     r2, r0          ; char < 'z'+1?
         brf     not_lower       ; no -> not lowercase
 
-        ; Lowercase letter: print uppercase then lowercase
-        lcu     r2, 0xDF        ; mask to clear bit 5
-        and     r2, r0          ; r2 = uppercase version
+        ; Lowercase letter: convert to uppercase (clear bit 5)
+        mov     r0, r2
+        lcu     r1, 0xDF        ; mask to clear bit 5
+        and     r0, r1          ; r0 = uppercase version
         la      r1, 0xFF0100
-        sb      r2, 0(r1)      ; transmit uppercase
-
-        lcu     r2, 0x20        ; bit 5
-        or      r2, r0          ; r2 = lowercase version
-        sb      r2, 0(r1)      ; transmit lowercase
+        sb      r0, 0(r1)      ; transmit uppercase
         bra     isr_done
 
 not_lower:
-        ; Not a lowercase letter — echo as-is
+        ; Not lowercase — echo as-is (already uppercase or non-letter)
         la      r1, 0xFF0100
-        sb      r0, 0(r1)      ; transmit original character
+        sb      r2, 0(r1)      ; transmit original character
 
 isr_done:
         ; Restore registers
@@ -67,3 +71,6 @@ isr_done:
         pop     r1
         pop     r0
         jmp     (ir)            ; return from interrupt
+
+do_halt:
+        bra     do_halt         ; halt on '!'

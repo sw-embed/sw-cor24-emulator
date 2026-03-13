@@ -1,5 +1,3 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
-     Running `target/debug/msp430-to-cor24 demos/demo_echo/demo_echo.msp430.s --entry start`
 ; COR24 Assembly - Generated from MSP430 via msp430-to-cor24
 ; Pipeline: Rust -> rustc (msp430-none-elf) -> MSP430 ASM -> COR24 ASM
 
@@ -18,6 +16,9 @@ isr_handler:
     la r1, 0xFF0100
     lb r0, 0(r1)
     mov r2, r0
+    lc r0, 0x21
+    ceq r0, r2
+    brt do_halt
     lc r0, 0x61
     clu r2, r0
     brt not_lower
@@ -29,7 +30,6 @@ isr_handler:
     and r0, r1
     la r1, 0xFF0100
     sb r0, 0(r1)
-    sb r2, 0(r1)
     bra isr_done
 not_lower:
     la r1, 0xFF0100
@@ -41,6 +41,8 @@ isr_done:
     pop r1
     pop r0
     jmp (ir)
+do_halt:
+    bra do_halt
 .Lfunc_end0:
 
 ; --- function: mmio_write ---

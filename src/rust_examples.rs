@@ -44,7 +44,7 @@ pub fn get_rust_examples() -> Vec<RustExample> {
         ),
         example(
             "Echo (Interrupts)",
-            "UART echo with interrupt ISR via asm!() passthrough",
+            "Interrupt UART echo (letters→uppercase, !→halt) via asm!()",
             include_str!("examples/rust_pipeline/demo_echo.rs"),
             include_str!("examples/rust_pipeline/demo_echo.msp430.s"),
             include_str!("examples/rust_pipeline/demo_echo.cor24.s"),

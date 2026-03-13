@@ -93,7 +93,7 @@ pub fn get_examples() -> Vec<(String, String, String)> {
         ),
         (
             "Echo".into(),
-            "Interrupt-driven UART echo (lowercase→Aa, others echo as-is)".into(),
+            "Interrupt-driven UART echo (letters→uppercase, !→halt)".into(),
             include_str!("examples/assembler/echo.s").into(),
         ),
         (

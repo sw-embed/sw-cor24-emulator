@@ -13,6 +13,9 @@ isr_handler:
 	; @cor24: la r1, 0xFF0100
 	; @cor24: lb r0, 0(r1)
 	; @cor24: mov r2, r0
+	; @cor24: lc r0, 0x21
+	; @cor24: ceq r0, r2
+	; @cor24: brt do_halt
 	; @cor24: lc r0, 0x61
 	; @cor24: clu r2, r0
 	; @cor24: brt not_lower
@@ -24,7 +27,6 @@ isr_handler:
 	; @cor24: and r0, r1
 	; @cor24: la r1, 0xFF0100
 	; @cor24: sb r0, 0(r1)
-	; @cor24: sb r2, 0(r1)
 	; @cor24: bra isr_done
 	; @cor24: not_lower:
 	; @cor24: la r1, 0xFF0100
@@ -36,6 +38,8 @@ isr_handler:
 	; @cor24: pop r1
 	; @cor24: pop r0
 	; @cor24: jmp (ir)
+	; @cor24: do_halt:
+	; @cor24: bra do_halt
 	;NO_APP
 .Lfunc_end0:
 	.size	isr_handler, .Lfunc_end0-isr_handler

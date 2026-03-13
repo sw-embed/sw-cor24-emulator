@@ -673,7 +673,6 @@ mod tests {
         }
         emu.set_pc(0);
 
-        // Simulate web UI exactly: step() which toggles paused each call
         fn run_tick(emu: &mut EmulatorCore, steps: u32) {
             for _ in 0..steps {
                 if emu.is_halted() { break; }
@@ -684,20 +683,30 @@ mod tests {
             }
         }
 
-        // Tick 1: init — prompt should appear
+        // Init — prompt should appear
         run_tick(&mut emu, 500);
         assert_eq!(emu.get_uart_output(), "?", "Prompt should appear");
         assert!(!emu.is_halted(), "Should not be halted");
 
-        // Send '1' (not lowercase) and run a tick — echoes as-is
-        emu.send_uart_byte(b'1');
-        run_tick(&mut emu, 500);
-        assert_eq!(emu.get_uart_output(), "?1", "'1' should echo as-is");
-
-        // Send 'a' (lowercase) and run a tick — echoes Aa
+        // Send 'a' (lowercase) → echoes 'A' (uppercase)
         emu.send_uart_byte(b'a');
         run_tick(&mut emu, 500);
-        assert_eq!(emu.get_uart_output(), "?1Aa", "'a' should echo 'Aa'");
+        assert_eq!(emu.get_uart_output(), "?A", "'a' -> 'A'");
+
+        // Send 'B' (uppercase) → echoes 'B' as-is
+        emu.send_uart_byte(b'B');
+        run_tick(&mut emu, 500);
+        assert_eq!(emu.get_uart_output(), "?AB", "'B' -> 'B'");
+
+        // Send '1' (digit) → echoes '1' as-is
+        emu.send_uart_byte(b'1');
+        run_tick(&mut emu, 500);
+        assert_eq!(emu.get_uart_output(), "?AB1", "'1' -> '1'");
+
+        // Send '!' → halts
+        emu.send_uart_byte(b'!');
+        run_tick(&mut emu, 500);
+        assert!(emu.is_halted(), "Should halt on '!'");
     }
 
     /// Test echo using the challenge.rs embedded source (same as web UI)
@@ -732,16 +741,66 @@ mod tests {
         run_tick(&mut emu, 500);
         assert_eq!(emu.get_uart_output(), "?", "Prompt");
 
-        emu.send_uart_byte(b'1');
+        emu.send_uart_byte(b'c');
         run_tick(&mut emu, 500);
-        assert_eq!(emu.get_uart_output(), "?1", "'1' -> echo as-is");
+        assert_eq!(emu.get_uart_output(), "?C", "'c' -> 'C'");
 
         emu.send_uart_byte(b'?');
         run_tick(&mut emu, 500);
-        assert_eq!(emu.get_uart_output(), "?1?", "'?' -> echo as-is");
+        assert_eq!(emu.get_uart_output(), "?C?", "'?' -> '?' as-is");
 
+        // '!' halts
+        emu.send_uart_byte(b'!');
+        run_tick(&mut emu, 500);
+        assert!(emu.is_halted(), "Should halt on '!'");
+    }
+
+    /// Test echo via the Rust pipeline COR24 output (asm!() passthrough)
+    #[test]
+    fn test_echo_rust_pipeline() {
+        use crate::assembler::Assembler;
+
+        let source = include_str!("examples/rust_pipeline/demo_echo.cor24.s");
+        let mut asm = Assembler::new();
+        let result = asm.assemble(source);
+        assert!(result.errors.is_empty(), "Assembly errors: {:?}", result.errors);
+
+        let mut emu = EmulatorCore::new();
+        for (addr, &byte) in result.bytes.iter().enumerate() {
+            emu.write_byte(addr as u32, byte);
+        }
+        emu.set_pc(0);
+
+        fn run_tick(emu: &mut EmulatorCore, steps: u32) {
+            for _ in 0..steps {
+                if emu.is_halted() { break; }
+                let r = emu.step();
+                if matches!(r.reason, StopReason::Halted | StopReason::InvalidInstruction(_)) {
+                    break;
+                }
+            }
+        }
+
+        // Init — prompt
+        run_tick(&mut emu, 500);
+        assert_eq!(emu.get_uart_output(), "?", "Prompt should appear");
+
+        // Send 'a', 'b', 'c' → expect 'A', 'B', 'C'
         emu.send_uart_byte(b'a');
         run_tick(&mut emu, 500);
-        assert_eq!(emu.get_uart_output(), "?1?Aa", "'a' -> 'Aa'");
+        assert_eq!(emu.get_uart_output(), "?A", "'a' -> 'A'");
+
+        emu.send_uart_byte(b'b');
+        run_tick(&mut emu, 500);
+        assert_eq!(emu.get_uart_output(), "?AB", "'b' -> 'B'");
+
+        emu.send_uart_byte(b'c');
+        run_tick(&mut emu, 500);
+        assert_eq!(emu.get_uart_output(), "?ABC", "'c' -> 'C'");
+
+        // Send '!' → halts
+        emu.send_uart_byte(b'!');
+        run_tick(&mut emu, 500);
+        assert!(emu.is_halted(), "Should halt on '!'");
     }
 }
