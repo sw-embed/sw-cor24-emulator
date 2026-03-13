@@ -43,7 +43,7 @@ h1 {
     position: fixed;
     left: 5px;
     top: 50px;
-    width: 100px;
+    width: 120px;
     z-index: 10;
 }
 
@@ -88,6 +88,11 @@ h1 {
 .wizard-buttons .sidebar-link:hover {
     background: #3a4a7e;
     color: #fff;
+}
+
+.ext-icon {
+    font-size: 0.7em;
+    opacity: 0.6;
 }
 
 /* Generic Panel Styling */
@@ -341,7 +346,7 @@ button.stop-btn:hover {
 
 .memory-row {
     display: flex;
-    gap: 8px;
+    gap: 4px;
     margin-bottom: 2px;
 }
 
@@ -352,7 +357,7 @@ button.stop-btn:hover {
 
 .memory-byte {
     display: inline-block;
-    margin-right: 4px;
+    margin-right: 1px;
     color: #d0d0d0;
 }
 
@@ -1421,7 +1426,7 @@ header h1 {
 
 .rust-wizard-layout {
     display: grid;
-    grid-template-columns: 100px 160px 1fr;
+    grid-template-columns: 120px 160px 1fr;
     height: 100%;
     overflow: hidden;
 }
@@ -1430,7 +1435,7 @@ header h1 {
 .wizard-sidebar {
     display: flex;
     flex-direction: column;
-    padding: 12px;
+    padding: 6px;
     background: #1a1a2e;
     border-right: 1px solid #3d2e6b;
 }
@@ -1443,14 +1448,14 @@ header h1 {
 
 .wizard-buttons button {
     width: 100%;
-    padding: 10px 12px;
+    padding: 8px;
     background: #2d1f4e;
     color: #c792ea;
     border: 1px solid #3d2e6b;
     border-radius: 4px;
     cursor: pointer;
     font-weight: bold;
-    font-size: 0.8em;
+    font-size: 0.75em;
     transition: all 0.2s;
 }
 
@@ -1693,6 +1698,7 @@ header h1 {
 .rust-wizard-layout .code-block {
     background: #12101f;
     border: 1px solid #3d2e6b;
+    font-size: 1.1em;
 }
 
 .rust-wizard-layout .rust-code {
@@ -1746,6 +1752,7 @@ header h1 {
 .debug-left, .debug-right {
     display: flex;
     flex-direction: column;
+    min-width: 0; /* Prevent grid blowout */
 }
 
 .debug-left h4, .debug-right h4 {
@@ -1793,7 +1800,7 @@ header h1 {
 
 .register-entry {
     display: flex;
-    justify-content: space-between;
+    gap: 6px;
     padding: 2px 4px;
     background: #1e1836;
     border-radius: 2px;
@@ -2126,6 +2133,10 @@ header h1 {
 
 .rust-wizard-layout .emu-halted {
     color: #dc2626;
+}
+
+.rust-wizard-layout .listing-scroll {
+    font-size: 1.1em;
 }
 
 /* Current line in assembly listing - purple theme */

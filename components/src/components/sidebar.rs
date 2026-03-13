@@ -2,10 +2,8 @@ use yew::prelude::*;
 
 #[derive(Clone, PartialEq)]
 pub struct SidebarButton {
-    pub emoji: String,
     pub label: String,
     pub onclick: Callback<MouseEvent>,
-    #[allow(dead_code)]
     pub title: Option<String>,
     /// If set, renders as an external link (<a>) instead of a button
     pub href: Option<String>,
@@ -32,7 +30,8 @@ pub fn sidebar(props: &SidebarProps) -> Html {
                             class="sidebar-link"
                             data-tooltip={title}
                         >
-                            {&btn.emoji}{" "}{&btn.label}
+                            {&btn.label}
+                            <span class="ext-icon">{" \u{2197}"}</span>
                         </a>
                     }
                 } else {
@@ -42,7 +41,7 @@ pub fn sidebar(props: &SidebarProps) -> Html {
                             {onclick}
                             data-tooltip={title}
                         >
-                            {&btn.emoji}{" "}{&btn.label}
+                            {&btn.label}
                         </button>
                     }
                 }

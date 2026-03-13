@@ -97,7 +97,6 @@ pub fn app() -> Html {
     // Sidebar buttons with inline callbacks
     let sidebar_buttons = vec![
         SidebarButton {
-            emoji: "📚".to_string(),
             label: "Tutorial".to_string(),
             onclick: {
                 let tutorial_open = tutorial_open.clone();
@@ -107,7 +106,6 @@ pub fn app() -> Html {
             href: None,
         },
         SidebarButton {
-            emoji: "📝".to_string(),
             label: "Examples".to_string(),
             onclick: {
                 let examples_open = examples_open.clone();
@@ -117,7 +115,6 @@ pub fn app() -> Html {
             href: None,
         },
         SidebarButton {
-            emoji: "🎯".to_string(),
             label: "Challenges".to_string(),
             onclick: {
                 let challenges_open = challenges_open.clone();
@@ -127,7 +124,6 @@ pub fn app() -> Html {
             href: None,
         },
         SidebarButton {
-            emoji: "📖".to_string(),
             label: "ISA Ref".to_string(),
             onclick: {
                 let isa_ref_open = isa_ref_open.clone();
@@ -137,7 +133,6 @@ pub fn app() -> Html {
             href: None,
         },
         SidebarButton {
-            emoji: "❓".to_string(),
             label: "Help".to_string(),
             onclick: {
                 let help_open = help_open.clone();
@@ -147,21 +142,18 @@ pub fn app() -> Html {
             href: None,
         },
         SidebarButton {
-            emoji: "📰".to_string(),
             label: "Blog".to_string(),
             onclick: Callback::noop(),
             title: Some("SW-Lab Blog".to_string()),
             href: Some("https://software-wrighter-lab.github.io/".to_string()),
         },
         SidebarButton {
-            emoji: "💬".to_string(),
             label: "Discord".to_string(),
             onclick: Callback::noop(),
             title: Some("SW-Lab Discord".to_string()),
             href: Some("https://discord.com/invite/Ctzk5uHggZ".to_string()),
         },
         SidebarButton {
-            emoji: "🔧".to_string(),
             label: "MakerLisp".to_string(),
             onclick: Callback::noop(),
             title: Some("MakerLisp".to_string()),
