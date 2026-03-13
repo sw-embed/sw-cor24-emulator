@@ -271,14 +271,19 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
                             } else {
                                 format!("0x{:06X}", val)
                             };
+                            let full_tooltip = if i == 5 {
+                                tooltip.to_string()
+                            } else {
+                                format!("{tooltip} = {val}")
+                            };
                             html! {
-                                <div class={row_class} data-tooltip={tooltip}>
+                                <div class={row_class} data-tooltip={full_tooltip}>
                                     <span class="reg-name">{name}</span>
                                     <span class="reg-value">{value_str}</span>
                                 </div>
                             }
                         })}
-                        <div class="register-entry" data-tooltip="Program counter">
+                        <div class="register-entry" data-tooltip={format!("Program counter = {}", state.pc)}>
                             <span class="reg-name">{"PC"}</span>
                             <span class="reg-value">{format!("0x{:06X}", state.pc)}</span>
                         </div>
