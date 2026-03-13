@@ -43,6 +43,13 @@ pub fn get_rust_examples() -> Vec<RustExample> {
             include_str!("examples/rust_pipeline/demo_countdown.cor24.s"),
         ),
         example(
+            "Echo (Interrupts)",
+            "UART echo with interrupt ISR via asm!() passthrough",
+            include_str!("examples/rust_pipeline/demo_echo.rs"),
+            include_str!("examples/rust_pipeline/demo_echo.msp430.s"),
+            include_str!("examples/rust_pipeline/demo_echo.cor24.s"),
+        ),
+        example(
             "Fibonacci (iterative)",
             "Compute fib(10) = 89 using iteration",
             include_str!("examples/rust_pipeline/demo_fibonacci_iter.rs"),

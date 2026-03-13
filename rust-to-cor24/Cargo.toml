@@ -5,7 +5,7 @@ edition = "2021"
 description = "Translate WASM to COR24 assembly"
 
 [workspace]
-exclude = ["examples/blink"]
+exclude = ["examples/blink", "demos/demo_echo"]
 
 [dependencies]
 wasmparser = "0.121"

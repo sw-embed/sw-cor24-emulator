@@ -116,7 +116,18 @@ pub fn translate_msp430(msp_asm: &str, entry_point: &str) -> Result<String> {
         let line = &lines[i];
         match line {
             MspLine::Comment(c) => {
-                if !c.is_empty() {
+                // @cor24: passthrough — emit raw COR24 assembly from asm!() blocks
+                if let Some(raw) = c.strip_prefix("; @cor24: ").or_else(|| c.strip_prefix(";@cor24: ")) {
+                    let raw = raw.trim();
+                    // Labels end with ':', emit without indentation
+                    if raw.ends_with(':') {
+                        out.push_str(&format!("{}\n", raw));
+                    } else {
+                        out.push_str(&format!("    {}\n", raw));
+                    }
+                } else if c == ";APP" || c == ";NO_APP" {
+                    // Skip rustc inline asm markers
+                } else if !c.is_empty() {
                     out.push_str(&format!("; {}\n", c));
                 } else {
                     out.push('\n');
