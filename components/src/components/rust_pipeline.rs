@@ -283,6 +283,8 @@ pub fn rust_pipeline(props: &RustPipelineProps) -> Html {
                        class="sidebar-link" data-tooltip="SW-Lab Blog">{"Blog"}</a>
                     <a href="https://discord.com/invite/Ctzk5uHggZ" target="_blank" rel="noopener"
                        class="sidebar-link" data-tooltip="SW-Lab Discord">{"Discord"}</a>
+                    <a href="https://www.makerlisp.com/" target="_blank" rel="noopener"
+                       class="sidebar-link" data-tooltip="MakerLisp">{"MakerLisp"}</a>
                 </div>
 
                 // LED and Switch are shown in the DebugPanel

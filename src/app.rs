@@ -160,6 +160,13 @@ pub fn app() -> Html {
             title: Some("SW-Lab Discord".to_string()),
             href: Some("https://discord.com/invite/Ctzk5uHggZ".to_string()),
         },
+        SidebarButton {
+            emoji: "🔧".to_string(),
+            label: "MakerLisp".to_string(),
+            onclick: Callback::noop(),
+            title: Some("MakerLisp".to_string()),
+            href: Some("https://www.makerlisp.com/".to_string()),
+        },
     ];
 
     // CPU operation callbacks
