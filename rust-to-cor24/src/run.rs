@@ -30,8 +30,10 @@ fn print_leds(leds: u8) {
     std::io::stdout().flush().ok();
 }
 
-/// Run emulator with timing control and optional instruction limit
-fn run_with_timing(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_instructions: i64) -> u64 {
+/// Run emulator with timing, instruction limit, and queued UART input.
+/// UART input bytes are fed one at a time after each batch, simulating
+/// character-by-character typing at the emulated UART RX register.
+fn run_with_timing(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_instructions: i64, uart_input: &[u8]) -> u64 {
     let start = Instant::now();
     let time_limit_duration = Duration::from_secs_f64(time_limit);
 
@@ -46,6 +48,7 @@ fn run_with_timing(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_inst
     let mut batch_start = Instant::now();
     let mut prev_led = emu.get_led();
     let mut prev_uart_len = 0usize;
+    let mut uart_input_pos = 0usize;
 
     emu.resume();
 
@@ -87,6 +90,20 @@ fn run_with_timing(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_inst
                 }
             }
             prev_uart_len = output.len();
+        }
+
+        // Feed next UART input character if available
+        if uart_input_pos < uart_input.len() {
+            let ch = uart_input[uart_input_pos];
+            emu.send_uart_byte(ch);
+            if ch == b'!' {
+                println!("[UART RX] '!'  (0x21) — halt signal");
+            } else if ch == b'\n' {
+                println!("[UART RX] '\\n'");
+            } else {
+                println!("[UART RX] '{}'  (0x{:02X})", ch as char, ch);
+            }
+            uart_input_pos += 1;
         }
 
         if result.instructions_run == 0 {
@@ -155,6 +172,7 @@ struct CliArgs {
     file: Option<String>,
     dump: bool,
     entry: Option<String>,           // entry point label
+    uart_input: Vec<u8>,             // characters to send to UART RX
 }
 
 fn parse_args() -> CliArgs {
@@ -167,6 +185,7 @@ fn parse_args() -> CliArgs {
         file: None,
         dump: false,
         entry: None,
+        uart_input: Vec::new(),
     };
 
     let mut i = 1;
@@ -201,6 +220,35 @@ fn parse_args() -> CliArgs {
             "--max-instructions" | "-n" => {
                 if i + 1 < args.len() {
                     cli.max_instructions = args[i + 1].parse().unwrap_or(-1);
+                    i += 1;
+                }
+            }
+            "--uart-input" | "-u" => {
+                if i + 1 < args.len() {
+                    // Parse escape sequences: \n, \x21, etc.
+                    let s = &args[i + 1];
+                    let mut bytes = Vec::new();
+                    let mut chars = s.chars().peekable();
+                    while let Some(ch) = chars.next() {
+                        if ch == '\\' {
+                            match chars.next() {
+                                Some('n') => bytes.push(b'\n'),
+                                Some('r') => bytes.push(b'\r'),
+                                Some('\\') => bytes.push(b'\\'),
+                                Some('x') => {
+                                    let hi = chars.next().unwrap_or('0');
+                                    let lo = chars.next().unwrap_or('0');
+                                    let hex = format!("{}{}", hi, lo);
+                                    bytes.push(u8::from_str_radix(&hex, 16).unwrap_or(0));
+                                }
+                                Some(c) => { bytes.push(b'\\'); bytes.push(c as u8); }
+                                None => bytes.push(b'\\'),
+                            }
+                        } else {
+                            bytes.push(ch as u8);
+                        }
+                    }
+                    cli.uart_input = bytes;
                     i += 1;
                 }
             }
@@ -383,12 +431,14 @@ fn main() {
         println!("  --speed, -s <ips>    Instructions per second (default: {})", DEFAULT_SPEED);
         println!("  --time, -t <secs>    Time limit in seconds (default: {})", DEFAULT_TIME_LIMIT);
         println!("  --max-instructions, -n <count>  Stop after N instructions (-1 = no limit, default)");
+        println!("  --uart-input, -u <str>  Send characters to UART RX (supports \\n, \\x21)");
         println!("  --dump               Dump CPU state, I/O, and non-zero memory after halt");
         println!("  --entry, -e <label>  Set entry point to label address");
         println!();
         println!("Example:");
         println!("  cor24-run --demo --speed 100000 --time 10");
         println!("  cor24-run --run prog.s --dump --speed 0");
+        println!("  cor24-run --run echo.s -u 'abc!' --speed 0 --dump");
         return;
     }
 
@@ -420,7 +470,7 @@ fn main() {
             load_assembled(&mut emu, &result);
 
             println!("Running (Ctrl+C to stop)...\n");
-            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit, cli.max_instructions);
+            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit, cli.max_instructions, &cli.uart_input);
 
             println!("\n\nExecuted {} instructions in {:.1}s", instructions, cli.time_limit);
             println!("Effective speed: {:.0} IPS", instructions as f64 / cli.time_limit);
@@ -475,7 +525,7 @@ fn main() {
                      if cli.speed == 0 { "max".to_string() } else { cli.speed.to_string() },
                      cli.time_limit);
 
-            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit, cli.max_instructions);
+            let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit, cli.max_instructions, &cli.uart_input);
 
             // Print UART output if any
             let uart = emu.get_uart_output();
