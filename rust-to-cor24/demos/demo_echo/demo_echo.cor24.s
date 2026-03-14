@@ -47,20 +47,19 @@ do_halt:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sb      r1, 0(r0)
-    pop     r2
-    jmp     (r2)
+    lw      r2, 24(fp)
+    sb      r2, 0(r0)
+    jmp     (r1)
 .Lfunc_end1:
 
 ; --- function: start ---
 start:
     lc      r0, 63
     ; call uart_putc
-    la      r2, .Lret_0
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_0:
+    jal     r1, (r2)
+    pop     r1
     la r0, isr_handler
     mov r6, r0
     lc r0, 1
@@ -74,10 +73,11 @@ start:
 
 ; --- function: uart_putc ---
 uart_putc:
-    mov     r1, r0
+    sw      r0, 24(fp)
     la      r0, 0xFF0100
     ; tail call mmio_write
     la      r2, mmio_write
     jmp     (r2)
 .Lfunc_end3:
+
 

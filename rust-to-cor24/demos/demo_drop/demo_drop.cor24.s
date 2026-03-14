@@ -15,7 +15,10 @@ _RNvCsgMG9zBUy57e_7___rustc17rust_begin_unwind:
 ; --- function: _RNvXs_Csdm5oPmm48S1_9demo_dropNtB4_5GuardNtNtNtCshbXD54rZpVC_4core3ops4drop4Drop4drop ---
 _RNvXs_Csdm5oPmm48S1_9demo_dropNtB4_5GuardNtNtNtCshbXD54rZpVC_4core3ops4drop4Drop4drop:
     lw      r0, 0(r0)
-    lc      r1, 0
+    push    r0
+    lc      r0, 0
+    sw      r0, 24(fp)
+    pop     r0
     ; tail call mem_write
     la      r2, mem_write
     jmp     (r2)
@@ -23,28 +26,33 @@ _RNvXs_Csdm5oPmm48S1_9demo_dropNtB4_5GuardNtNtNtCshbXD54rZpVC_4core3ops4drop4Dro
 
 ; --- function: guard_new ---
 guard_new:
-    lw      r1, 18(fp)
-    push    r1
-    sw      r0, 18(fp)
-    lc      r1, 1
-    ; call mem_write
-    la      r2, .Lret_0
-    push    r2
-    la      r2, mem_write
-    jmp     (r2)
-    .Lret_0:
+    sw      r0, 30(fp)
     lw      r0, 18(fp)
+    push    r0
+    lw      r0, 30(fp)
+    sw      r0, 18(fp)
+    push    r0
+    lc      r0, 1
+    sw      r0, 24(fp)
+    pop     r0
+    ; call mem_write
+    push    r1
+    la      r2, mem_write
+    jal     r1, (r2)
     pop     r1
-    sw      r1, 18(fp)
-    pop     r2
-    jmp     (r2)
+    lw      r0, 18(fp)
+    sw      r0, 30(fp)
+    pop     r0
+    sw      r0, 18(fp)
+    lw      r0, 30(fp)
+    jmp     (r1)
 .Lfunc_end2:
 
 ; --- function: mem_write ---
 mem_write:
-    sb      r1, 0(r0)
-    pop     r2
-    jmp     (r2)
+    lw      r2, 24(fp)
+    sb      r2, 0(r0)
+    jmp     (r1)
 .Lfunc_end3:
 
 ; --- function: start ---
@@ -52,30 +60,31 @@ start:
     sub     sp, 3
     la      r0, 0x000100
     ; call guard_new
-    la      r2, .Lret_1
-    push    r2
+    push    r1
     la      r2, guard_new
-    jmp     (r2)
-    .Lret_1:
+    jal     r1, (r2)
+    pop     r1
     la      r0, 0x000100
     mov     r2, sp
     sw      r0, 0(r2)
     mov     r0, sp
     ; call _RNvXs_Csdm5oPmm48S1_9demo_dropNtB4_5GuardNtNtNtCshbXD54rZpVC_4core3ops4drop4Drop4drop
-    la      r2, .Lret_2
-    push    r2
+    push    r1
     la      r2, _RNvXs_Csdm5oPmm48S1_9demo_dropNtB4_5GuardNtNtNtCshbXD54rZpVC_4core3ops4drop4Drop4drop
-    jmp     (r2)
-    .Lret_2:
+    jal     r1, (r2)
+    pop     r1
     la      r0, 0x000100
-    la      r1, 0x0000FF
+    push    r0
+    la      r0, 0x0000FF
+    sw      r0, 24(fp)
+    pop     r0
     ; call mem_write
-    la      r2, .Lret_3
-    push    r2
+    push    r1
     la      r2, mem_write
-    jmp     (r2)
-    .Lret_3:
+    jal     r1, (r2)
+    pop     r1
 .LBB4_1:
     bra     .LBB4_1
 .Lfunc_end4:
+
 

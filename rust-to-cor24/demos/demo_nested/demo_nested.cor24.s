@@ -10,46 +10,40 @@
 _RNvCsgMG9zBUy57e_7___rustc17rust_begin_unwind:
     lc      r0, 80
     ; call uart_putc
-    la      r2, .Lret_0
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_0:
+    jal     r1, (r2)
+    pop     r1
     lc      r0, 65
     ; call uart_putc
-    la      r2, .Lret_1
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_1:
+    jal     r1, (r2)
+    pop     r1
     lc      r0, 78
     ; call uart_putc
-    la      r2, .Lret_2
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_2:
+    jal     r1, (r2)
+    pop     r1
     lc      r0, 73
     ; call uart_putc
-    la      r2, .Lret_3
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_3:
+    jal     r1, (r2)
+    pop     r1
     lc      r0, 67
     ; call uart_putc
-    la      r2, .Lret_4
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_4:
+    jal     r1, (r2)
+    pop     r1
     lc      r0, 10
     ; call uart_putc
-    la      r2, .Lret_5
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_5:
+    jal     r1, (r2)
+    pop     r1
 .LBB0_1:
     bra     .LBB0_1
 .Lfunc_end0:
@@ -58,64 +52,63 @@ _RNvCsgMG9zBUy57e_7___rustc17rust_begin_unwind:
 demo_nested:
     la      r0, 0xFF0000
     ; call mmio_read
-    la      r2, .Lret_6
-    push    r2
+    push    r1
     la      r2, mmio_read
-    jmp     (r2)
-    .Lret_6:
+    jal     r1, (r2)
+    pop     r1
     add     r0, 5
     ; call level_a
-    la      r2, .Lret_7
-    push    r2
+    push    r1
     la      r2, level_a
-    jmp     (r2)
-    .Lret_7:
+    jal     r1, (r2)
+    pop     r1
 .Lfunc_end1:
 
 ; --- function: level_a ---
 level_a:
     add     r0, 10
     ; call level_b
-    la      r2, .Lret_8
-    push    r2
+    push    r1
     la      r2, level_b
-    jmp     (r2)
-    .Lret_8:
+    jal     r1, (r2)
+    pop     r1
 .Lfunc_end2:
 
 ; --- function: level_b ---
 level_b:
-    mov     r1, r0
+    sw      r0, 24(fp)
     add     r0, r0
     add     r0, 3
     ; call level_c
-    la      r2, .Lret_9
-    push    r2
+    push    r1
     la      r2, level_c
-    jmp     (r2)
-    .Lret_9:
+    jal     r1, (r2)
+    pop     r1
 .Lfunc_end3:
 
 ; --- function: level_c ---
 level_c:
-    lw      r1, 18(fp)
-    push    r1
-    sw      r1, 18(fp)
-    mov     r1, r0
+    sw      r0, 30(fp)
+    lw      r0, 18(fp)
+    push    r0
+    lw      r0, 30(fp)
+    push    r0
+    lw      r0, 24(fp)
+    sw      r0, 18(fp)
+    pop     r0
+    sw      r0, 24(fp)
     la      r0, 0xFF0000
     ; call mmio_write
-    la      r2, .Lret_10
-    push    r2
+    push    r1
     la      r2, mmio_write
-    jmp     (r2)
-    .Lret_10:
+    jal     r1, (r2)
+    pop     r1
     lw      r0, 18(fp)
     ; call uart_putc
-    la      r2, .Lret_11
-    push    r2
+    push    r1
     la      r2, uart_putc
-    jmp     (r2)
-    .Lret_11:
+    jal     r1, (r2)
+    pop     r1
 .LBB4_1:
     bra     .LBB4_1
 .Lfunc_end4:
@@ -123,33 +116,32 @@ level_c:
 ; --- function: mmio_read ---
 mmio_read:
     lbu      r0, 0(r0)
-    pop     r2
-    jmp     (r2)
+    jmp     (r1)
 .Lfunc_end5:
 
 ; --- function: mmio_write ---
 mmio_write:
-    sb      r1, 0(r0)
-    pop     r2
-    jmp     (r2)
+    lw      r2, 24(fp)
+    sb      r2, 0(r0)
+    jmp     (r1)
 .Lfunc_end6:
 
 ; --- function: start ---
 start:
     ; call demo_nested
-    la      r2, .Lret_12
-    push    r2
+    push    r1
     la      r2, demo_nested
-    jmp     (r2)
-    .Lret_12:
+    jal     r1, (r2)
+    pop     r1
 .Lfunc_end7:
 
 ; --- function: uart_putc ---
 uart_putc:
-    mov     r1, r0
+    sw      r0, 24(fp)
     la      r0, 0xFF0100
     ; tail call mmio_write
     la      r2, mmio_write
     jmp     (r2)
 .Lfunc_end8:
+
 
