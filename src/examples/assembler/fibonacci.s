@@ -10,10 +10,9 @@ loop:   push    r0              ; save a
         ; print b (current fib number)
         mov     r0,r1           ; r0 = b (value to print)
         push    r1              ; save b
-        la      r2,pret
-        push    r2
-        bra     print_num
-pret:   pop     r1              ; restore b
+        la      r2,print_num
+        jal     r1,(r2)         ; call print_num
+        pop     r1              ; restore b
         pop     r2              ; restore counter
 
         ; print space (unless last iteration)
@@ -25,10 +24,9 @@ pret:   pop     r1              ; restore b
         push    r1
         push    r2
         lc      r0,32           ; ' '
-        la      r2,spret
-        push    r2
-        bra     putc
-spret:  pop     r2
+        la      r2,putc
+        jal     r1,(r2)         ; call putc
+        pop     r2
         pop     r1
 skip_sp:
         ; advance: a=old_b, b=old_a+old_b
@@ -46,15 +44,16 @@ skip_sp:
 
         ; print newline
         lc      r0,10
-        la      r2,halt
-        push    r2
-        bra     putc
+        la      r2,putc
+        jal     r1,(r2)         ; call putc
 
 halt:   bra     halt
 
 ; print_num: print r0 as 1-2 digit decimal
-; clobbers r0,r1,r2
+; Uses jal calling convention: r1 = return address
+; Clobbers r0, r1, r2
 print_num:
+        push    r1              ; save return address
         lc      r1,0            ; tens = 0
 .div:   lc      r2,10
         clu     r0,r2           ; r0 < 10?
@@ -66,25 +65,25 @@ print_num:
         ; print tens if nonzero
         ceq     r1,z
         brt     .notens
-        push    r1
+        push    r1              ; save tens
         lc      r0,48
         add     r0,r1           ; '0' + tens
-        la      r2,.tret
-        push    r2
-        bra     putc
-.tret:  pop     r1
+        la      r2,putc
+        jal     r1,(r2)         ; call putc
+        pop     r1              ; restore tens (not needed, but clean stack)
 .notens:
         pop     r0              ; ones
         lc      r1,48
         add     r0,r1           ; '0' + ones
-        la      r2,.oret
-        push    r2
-        bra     putc
-.oret:  pop     r2
-        jmp     (r2)            ; return
+        la      r2,putc
+        jal     r1,(r2)         ; call putc
+        pop     r1              ; restore original return address
+        jmp     (r1)            ; return to caller
 
 ; putc: send byte in r0, polling TX busy first
-putc:   push    r0              ; save char
+; Uses jal calling convention: r1 = return address
+putc:   push    r1              ; save return address
+        push    r0              ; save char
         la      r1,0xFF0100     ; UART base
 .wait:  lb      r2,1(r1)        ; read status byte
         lcu     r0,128
@@ -93,5 +92,5 @@ putc:   push    r0              ; save char
         brf     .wait           ; spin while TX busy
         pop     r0              ; restore char
         sb      r0,0(r1)        ; transmit byte
-        pop     r2              ; return address
-        jmp     (r2)
+        pop     r1              ; restore return address
+        jmp     (r1)
