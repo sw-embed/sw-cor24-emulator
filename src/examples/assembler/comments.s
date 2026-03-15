@@ -1,34 +1,27 @@
-; ============================================================
-; COR24 Assembly — Comments Example
-; ============================================================
+; -- Comments Example --
 ;
-; You can edit this (or any Assembler tab example) to write
-; and assemble COR24 code right in your browser, then run
-; or single-step through it.
+; Edit this or any Assembler example
+; to write COR24 code in your browser,
+; assemble it, then run or step through.
 ;
-; The C and Rust tab examples are read-only — they were
-; compiled offline and are shown here as fixed pipeline demos.
+; C and Rust examples are read-only
+; (compiled offline, shown as demos).
 ;
-; ------------------------------------------------------------
-; Comment syntax
-; ------------------------------------------------------------
+; -- Comment syntax --
 ;
-; Semicolons start a comment (to end of line):
+; Semicolons start a comment:
 
-    lcu r0, 100     ; load the constant 100 into r0
+    lcu r0, 100     ; load 100 into r0
 
-; Hash marks also start a comment:
+; Hash marks work too:
 
-    lcu r1, 200     # load the constant 200 into r1
+    lcu r1, 200     # load 200 into r1
 
-; A full line starting with ; or # is a comment:
-# This entire line is a comment too.
+# Full-line comments use ; or #
 
-; ------------------------------------------------------------
-; Try it: edit, assemble, step!
-; ------------------------------------------------------------
+; -- Try it: edit, assemble, step! --
 
-    add r0, r1      ; r0 = 100 + 200 = 300
+    add r0, r1      ; r0 = 300
 
-; COR24 has no halt instruction — stop by branching to self:
+; Stop by branching to self:
 done:   bra     done
