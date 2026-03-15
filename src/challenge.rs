@@ -87,6 +87,11 @@ pub fn get_examples() -> Vec<(String, String, String)> {
             include_str!("examples/assembler/button_echo.s").into(),
         ),
         (
+            "Comments".into(),
+            "Comment syntax and how to edit examples".into(),
+            include_str!("examples/assembler/comments.s").into(),
+        ),
+        (
             "Countdown".into(),
             "Count 10→0, store to memory".into(),
             include_str!("examples/assembler/countdown.s").into(),
