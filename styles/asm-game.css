@@ -552,6 +552,7 @@ button.stop-btn:hover {
     background: #16213e;
     border: 2px solid #00d9ff;
     border-radius: 10px;
+    font-size: 1.05em;
     width: 90%;
     max-width: 800px;
     max-height: 90vh;
