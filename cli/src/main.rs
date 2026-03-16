@@ -137,6 +137,7 @@ impl Debugger {
                     self.uart_printed = 0;
                     println!("CPU reset. PC = 0x{:06X}", self.emu.pc());
                 }
+                "t" | "trace" => self.cmd_trace(arg),
                 "uart" => self.cmd_uart(arg),
                 "led" => self.cmd_led(),
                 "button" | "btn" => self.cmd_button(arg),
@@ -174,6 +175,7 @@ impl Debugger {
         match result.reason {
             StopReason::Halted => {
                 println!("\nCPU halted after {} instructions", result.instructions_run);
+                self.cmd_trace("10");
             }
             StopReason::Breakpoint(addr) => {
                 println!("Breakpoint at 0x{:06X}", addr);
@@ -271,6 +273,7 @@ impl Debugger {
     fn cmd_info(&self, arg: &str) {
         match arg {
             "r" | "reg" | "registers" => self.show_regs(),
+            "t" | "trace" => self.cmd_trace("20"),
             "b" | "break" | "breakpoints" => {
                 let bps = self.emu.breakpoints();
                 if bps.is_empty() {
@@ -282,7 +285,7 @@ impl Debugger {
                 }
             }
             "" => self.show_regs(),
-            _ => println!("info: r(egisters), b(reakpoints)"),
+            _ => println!("info: r(egisters), t(race), b(reakpoints)"),
         }
     }
 
@@ -378,6 +381,20 @@ impl Debugger {
         }
     }
 
+    fn cmd_trace(&self, arg: &str) {
+        let n: usize = if arg.is_empty() { 20 } else { arg.parse().unwrap_or(20) };
+        let trace = self.emu.trace();
+        let entries = trace.last_n(n);
+        if entries.is_empty() {
+            println!("No trace entries.");
+        } else {
+            for entry in &entries {
+                println!("{}", entry);
+            }
+            println!("({} of {} entries shown)", entries.len(), trace.len());
+        }
+    }
+
     fn cmd_uart(&mut self, arg: &str) {
         if let Some(rest) = arg.strip_prefix("send ").or_else(|| arg.strip_prefix("tx ")) {
             let rest = rest.trim();
@@ -449,6 +466,7 @@ impl Debugger {
         println!("  i, info [r|b]       Show registers or breakpoints");
         println!("  x [/N] <addr>       Examine N bytes at address");
         println!("  p, print <reg|addr> Print register or memory");
+        println!("  t, trace [N]        Show last N traced instructions (default 20)");
         println!("  disas [addr] [N]    Disassemble N instructions");
         println!("  load <file.lgo>     Load LGO file");
         println!("  uart                Show UART output buffer");
