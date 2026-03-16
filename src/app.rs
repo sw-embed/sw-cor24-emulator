@@ -2052,22 +2052,32 @@ nop             ; no operation (encoded as add r0,r0)</pre>
 
 const ISA_REF_CONTENT: &str = r#"
 <h3>COR24 Instruction Set Reference</h3>
-<p><em>32 opcodes, 211 instruction forms (1, 2, or 4 bytes).
+<p><em>C-Oriented RISC, 24-bit. 32 opcodes, 211 instruction forms (1, 2, or 4 bytes).
 See <a href="https://makerlisp.com" target="_blank">makerlisp.com</a> for the hardware specification.</em></p>
+
+<h4>CPU State</h4>
+<p>All registers and addresses are <strong>24 bits</strong> wide (values 0 to 16,777,215).</p>
+<table>
+<tr><th>State</th><th>Description</th></tr>
+<tr><td><strong>PC</strong></td><td>Program counter — address of next instruction. Starts at 0.</td></tr>
+<tr><td><strong>C</strong></td><td>Condition flag — single bit, set by compare instructions (ceq, clu, cls), tested by branches (brt, brf). Also writable via <code>mov ra, c</code> and <code>clu z, ra</code>.</td></tr>
+</table>
 
 <h4>Registers</h4>
 <table>
-<tr><th>Register</th><th>Name</th><th>Purpose</th></tr>
-<tr><td><code>r0</code></td><td></td><td>General purpose</td></tr>
-<tr><td><code>r1</code></td><td></td><td>General purpose / return address (jal)</td></tr>
-<tr><td><code>r2</code></td><td></td><td>General purpose</td></tr>
-<tr><td><code>r3</code></td><td>fp</td><td>Frame pointer</td></tr>
-<tr><td><code>r4</code></td><td>sp</td><td>Stack pointer (init: 0xFEEC00, grows down)</td></tr>
-<tr><td><code>r5</code></td><td>z</td><td>Always zero — for compares: <code>ceq r0, z</code></td></tr>
-<tr><td><code>r6</code></td><td>iv</td><td>Interrupt vector (ISR address)</td></tr>
-<tr><td><code>r7</code></td><td>ir</td><td>Interrupt return address</td></tr>
+<tr><th>Register</th><th>Name</th><th>Width</th><th>Purpose</th></tr>
+<tr><td><code>r0</code></td><td></td><td>24-bit</td><td>General purpose</td></tr>
+<tr><td><code>r1</code></td><td></td><td>24-bit</td><td>General purpose / return address (jal convention)</td></tr>
+<tr><td><code>r2</code></td><td></td><td>24-bit</td><td>General purpose</td></tr>
+<tr><td><code>r3</code></td><td>fp</td><td>24-bit</td><td>Frame pointer — base for stack-frame locals</td></tr>
+<tr><td><code>r4</code></td><td>sp</td><td>24-bit</td><td>Stack pointer — init 0xFEEC00, grows downward (3 bytes per push)</td></tr>
+<tr><td><code>r5</code></td><td>z</td><td>24-bit</td><td>Hardwired to zero. Readable in compares: <code>ceq r0, z</code></td></tr>
+<tr><td><code>r6</code></td><td>iv</td><td>24-bit</td><td>Interrupt vector — address of interrupt service routine</td></tr>
+<tr><td><code>r7</code></td><td>ir</td><td>24-bit</td><td>Interrupt return — saved PC when interrupt fires. Return with <code>jmp (ir)</code></td></tr>
 </table>
-<p>Single condition flag <strong>C</strong> — set by compare instructions, tested by branches.</p>
+<p>Only <strong>r0, r1, r2</strong> can be destinations for most ALU/load instructions.
+<strong>fp</strong> can be pushed/popped and used as a memory base register.
+<strong>sp</strong> is modified by push, pop, and <code>sub sp</code>.</p>
 
 <h4>Load Constants</h4>
 <table>
@@ -2169,6 +2179,19 @@ See <a href="https://makerlisp.com" target="_blank">makerlisp.com</a> for the ha
 <tr><td><pre>        jmp (r1)</pre></td><td>Return from function</td></tr>
 <tr><td><pre>        jmp (ir)</pre></td><td>Return from interrupt</td></tr>
 </table>
+
+<h4>Interrupts</h4>
+<p>COR24 supports one interrupt source: UART RX data ready.</p>
+<table>
+<tr><th>Step</th><th>Action</th></tr>
+<tr><td>Setup</td><td>Load ISR address into <code>iv</code>: <code>la r0, isr</code> then <code>mov iv, r0</code></td></tr>
+<tr><td>Enable</td><td>Write 1 to interrupt enable register at 0xFF0010</td></tr>
+<tr><td>Trigger</td><td>When UART receives a byte, CPU saves PC to <code>ir</code> and jumps to <code>iv</code></td></tr>
+<tr><td>ISR body</td><td>Save registers (push), read UART data (acknowledges interrupt), process, restore (pop)</td></tr>
+<tr><td>Return</td><td><code>jmp (ir)</code> — resumes execution at the interrupted instruction</td></tr>
+</table>
+<p>Interrupts do not nest — a second interrupt cannot fire while an ISR is running.
+Reading the UART data register at 0xFF0100 acknowledges the interrupt.</p>
 
 <h4>Memory Map</h4>
 <table>
