@@ -103,6 +103,7 @@ impl Executor {
         let trace_c_before = cpu.c;
         let trace_sp_before = cpu.get_reg(4);
         let trace_instruction_num = cpu.instructions;
+        let mut halted_by_self_branch = false;
 
         // Execute instruction
         match inst.opcode {
@@ -144,9 +145,10 @@ impl Executor {
                 if target == instruction_addr {
                     cpu.pc = instruction_addr;
                     cpu.halted = true;
-                    return ExecuteResult::Halted;
+                    halted_by_self_branch = true;
+                } else {
+                    cpu.pc = target;
                 }
-                cpu.pc = target;
             }
 
             Opcode::Brf => {
@@ -441,7 +443,11 @@ impl Executor {
             instruction_num: trace_instruction_num,
         });
 
-        ExecuteResult::Ok
+        if halted_by_self_branch {
+            ExecuteResult::Halted
+        } else {
+            ExecuteResult::Ok
+        }
     }
 
     /// Run until halted or max cycles reached
