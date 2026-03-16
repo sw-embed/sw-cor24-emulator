@@ -488,6 +488,7 @@ pub fn app() -> Html {
                     current_instruction: new_cpu.get_current_instruction(),
                     assembled_lines,
                     uart_output: new_cpu.get_uart_output(),
+                    trace_lines: new_cpu.get_trace_lines(100),
                 });
 
                 rust_cpu.set(new_cpu);
@@ -559,6 +560,7 @@ pub fn app() -> Html {
                     current_instruction: new_cpu.get_current_instruction(),
                     assembled_lines: prev_state.assembled_lines,
                     uart_output: new_cpu.get_uart_output(),
+                    trace_lines: new_cpu.get_trace_lines(100),
                 });
                 rust_cpu.set(new_cpu);
             }
@@ -730,6 +732,7 @@ pub fn app() -> Html {
                         current_instruction: current_cpu.get_current_instruction(),
                         assembled_lines: asm_lines.clone(),
                         uart_output: current_cpu.get_uart_output(),
+                        trace_lines: current_cpu.get_trace_lines(100),
                     });
 
                     if halted {
@@ -855,6 +858,7 @@ pub fn app() -> Html {
                         current_instruction: new_cpu.get_current_instruction(),
                         assembled_lines,
                         uart_output: new_cpu.get_uart_output(),
+                        trace_lines: new_cpu.get_trace_lines(100),
                     });
 
                     rust_cpu.set(new_cpu);
@@ -1016,6 +1020,7 @@ pub fn app() -> Html {
                     current_instruction: new_cpu.get_current_instruction(),
                     assembled_lines,
                     uart_output: new_cpu.get_uart_output(),
+                    trace_lines: new_cpu.get_trace_lines(100),
                 });
 
                 c_cpu.set(new_cpu);
@@ -1081,6 +1086,7 @@ pub fn app() -> Html {
                 current_instruction: new_cpu.get_current_instruction(),
                 assembled_lines: prev_state.assembled_lines,
                 uart_output: new_cpu.get_uart_output(),
+                trace_lines: new_cpu.get_trace_lines(100),
             });
             c_cpu.set(new_cpu);
         })
@@ -1234,6 +1240,7 @@ pub fn app() -> Html {
                         current_instruction: current_cpu.get_current_instruction(),
                         assembled_lines: asm_lines.clone(),
                         uart_output: current_cpu.get_uart_output(),
+                        trace_lines: current_cpu.get_trace_lines(100),
                     });
 
                     if halted {
@@ -1371,6 +1378,7 @@ pub fn app() -> Html {
                         current_instruction: new_cpu.get_current_instruction(),
                         assembled_lines,
                         uart_output: new_cpu.get_uart_output(),
+                        trace_lines: new_cpu.get_trace_lines(100),
                     });
 
                     c_cpu.set(new_cpu);
@@ -2117,6 +2125,7 @@ fn capture_cpu_state(cpu: &WasmCpu, prev: &EmulatorState) -> EmulatorState {
         current_instruction: cpu.get_current_instruction(),
         assembled_lines: cpu.get_assembled_lines(),
         uart_output: cpu.get_uart_output(),
+        trace_lines: cpu.get_trace_lines(100),
     }
 }
 

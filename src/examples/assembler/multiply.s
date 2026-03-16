@@ -30,15 +30,15 @@ loop:
         brf     assert_fail
 
         ; Both methods agree — print "42 42\n"
+        push    r0              ; save result
         la      r2,print2
         jal     r1,(r2)
 
-        push    r0
         lc      r0,32           ; ' '
         la      r2,putc
         jal     r1,(r2)
-        pop     r0
 
+        pop     r0              ; restore result
         la      r2,print2
         jal     r1,(r2)
 

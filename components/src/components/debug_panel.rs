@@ -64,6 +64,7 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
 
     // Step count selector state
     let step_count = use_state(|| 1u32);
+    let trace_expanded = use_state(|| false);
 
     // Track PC for auto-scroll
     let last_pc = use_state(|| 0u32);
@@ -374,6 +375,24 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
                             </div>
                         </div>
                     </div>
+
+                    // Instruction trace - collapsible
+                    if !state.trace_lines.is_empty() {
+                        <div class="trace-section">
+                            <div class="trace-header" onclick={
+                                let trace_expanded = trace_expanded.clone();
+                                Callback::from(move |_| trace_expanded.set(!*trace_expanded))
+                            }>
+                                <span class="trace-toggle">{if *trace_expanded { "\u{25BC}" } else { "\u{25B6}" }}</span>
+                                <span>{format!("Instruction Trace ({} entries)", state.trace_lines.len())}</span>
+                            </div>
+                            if *trace_expanded {
+                                <pre class="trace-content">{
+                                    state.trace_lines.join("\n")
+                                }</pre>
+                            }
+                        </div>
+                    }
 
                     // Memory viewer - three regions
                     if props.is_loaded {

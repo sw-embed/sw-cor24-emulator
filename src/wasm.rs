@@ -257,6 +257,11 @@ impl WasmCpu {
         format!("{:04X}: {}", pc, text)
     }
 
+    /// Get the last N trace entries as formatted strings
+    pub fn get_trace_lines(&self, n: usize) -> Vec<String> {
+        self.emu.trace().last_n(n).iter().map(|e| format!("{}", e)).collect()
+    }
+
     /// Get the end address of loaded program (highest address written)
     pub fn get_program_end(&self) -> u32 {
         self.emu.program_end()

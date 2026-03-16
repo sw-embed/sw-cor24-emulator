@@ -133,7 +133,7 @@ fn test_multiply_example() {
     cpu.pc = 0;
     let executor = Executor::new();
     executor.run(&mut cpu, 10_000);
-    assert_eq!(cpu.io.uart_output, "42\n", "Multiply should print '42\\n'");
+    assert_eq!(cpu.io.uart_output, "42 42\n", "Multiply should print '42 42\\n'");
 }
 
 /// Helper: assemble source, run, and return CPU state

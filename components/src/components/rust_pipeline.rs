@@ -72,6 +72,7 @@ pub struct EmulatorState {
     pub current_instruction: String,
     pub assembled_lines: Vec<String>,
     pub uart_output: String,
+    pub trace_lines: Vec<String>,
 }
 
 /// Wizard steps for progressive disclosure
