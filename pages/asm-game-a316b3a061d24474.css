@@ -1958,6 +1958,45 @@ header h1 {
     border-color: #888;
 }
 
+.trace-section {
+    margin-top: 12px;
+    border: 1px solid #333;
+    border-radius: 3px;
+    background: #0a0a1a;
+}
+
+.trace-header {
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 0.8em;
+    color: #a78bfa;
+    font-weight: bold;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.trace-header:hover {
+    background: #1a1a2e;
+}
+
+.trace-toggle {
+    font-size: 0.7em;
+}
+
+.trace-content {
+    padding: 8px 10px;
+    font-family: 'Monaco', monospace;
+    font-size: 0.95em;
+    color: #a5d6a7;
+    background: #12101f;
+    border-top: 1px solid #333;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre;
+    margin: 0;
+}
+
 .memory-section {
     margin-top: 12px;
 }
