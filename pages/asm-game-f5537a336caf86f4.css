@@ -164,6 +164,8 @@ button.stop-btn:hover {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    flex: 1;
+    min-height: 0;
 }
 
 .controls {
@@ -552,8 +554,9 @@ button.stop-btn:hover {
     background: #16213e;
     border: 2px solid #00d9ff;
     border-radius: 10px;
-    width: 90%;
-    max-width: 800px;
+    font-size: 1.15em;
+    width: 95%;
+    max-width: 1100px;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
@@ -572,6 +575,71 @@ button.stop-btn:hover {
 .modal-body {
     flex: 1;
     overflow-y: auto;
+}
+
+.modal-body h4 {
+    color: #00d9ff;
+    margin-top: 20px;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #2a3a5e;
+}
+
+.modal-body h4:first-child {
+    margin-top: 8px;
+}
+
+.modal-body pre {
+    background: #0d1b2a;
+    border: 1px solid #2a3a5e;
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin: 8px 0 12px 0;
+    font-size: 0.9em;
+    overflow-x: auto;
+}
+
+.modal-body table {
+    border-collapse: collapse;
+    margin: 8px 0 12px 0;
+    width: 100%;
+}
+
+.modal-body td, .modal-body th {
+    padding: 5px 10px;
+    border: 1px solid #2a3a5e;
+    text-align: left;
+}
+
+.modal-body th {
+    background: #1a2a4e;
+    color: #00d9ff;
+}
+
+.modal-body tr:nth-child(even) {
+    background: #0d1b2a;
+}
+
+.modal-body code {
+    background: #0d1b2a;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.95em;
+}
+
+.modal-body p {
+    margin: 6px 0;
+    line-height: 1.5;
+}
+
+.modal-body ul, .modal-body ol {
+    margin: 6px 0 12px 0;
+    padding-left: 24px;
+}
+
+.modal-body li {
+    margin: 4px 0;
+    line-height: 1.5;
 }
 
 .modal-close {
@@ -1632,6 +1700,41 @@ header h1 {
     padding-bottom: calc(100vh - 150px); /* Allow any cell to scroll to top */
     scroll-behavior: smooth;
     background: #1a1a2e;
+}
+
+.editor-column {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Toolbar above editor for Examples/Challenges buttons */
+.editor-toolbar {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+.wizard-header-btn {
+    padding: 4px 8px;
+    text-align: center;
+}
+
+.toolbar-btn {
+    background: #1e1836;
+    color: #c792ea;
+    border: 1px solid #3d2e6b;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-size: 0.85em;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.toolbar-btn:hover {
+    background: #2d1f4e;
+    border-color: #7c3aed;
 }
 
 /* Notebook placeholder when no example loaded */
