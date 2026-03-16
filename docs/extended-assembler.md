@@ -7,8 +7,12 @@ cor24 instructions plus several convenience extensions. The reference cor24
 assembler (`as24`, running as `asld24-server` on queenbee:7412) does not
 support these extensions.
 
-We want hand-written `.s` examples in the Web UI and CLI to be valid for
-**both** assemblers, so a viewer could use either tool.
+We want hand-written `.s` examples in the Web UI and CLI to be **bug-compatible**
+with the reference assembler — meaning they assemble correctly with `as24` as
+shipped, regardless of whether our extensions are technically correct. If `as24`
+doesn't support `la`, our examples must not use `la`, even though it's a real
+hardware instruction. The goal is that a student can copy any example from the
+Web UI and assemble it with the tools they actually have.
 
 ## Validation Results
 
@@ -21,22 +25,16 @@ reference emits 3 bytes (`00 00 00`).
 
 ## Extensions Our Assembler Supports (Reference Does Not)
 
-### 1. `la` — Load Address (4-byte instruction)
+### 1. ~~`la` — Load Address~~ RESOLVED
 
-**This is a real COR24 hardware instruction** with opcode `0x0B` in the decode
-ROM extracted from `cor24_cpu.v`. It loads a 24-bit immediate into a register.
-The reference assembler simply does not implement it yet. There is no
-multi-instruction equivalent — `la` is the only way to load an arbitrary
-24-bit value into a register in one instruction.
+**Update (2026-03-16):** Testing revealed `la` IS supported by the reference
+assembler. The original test failure was due to hex immediates (`la r0,0xFF0000`
+fails, but `la r0,-65536` works). The reference assembler supports `la` with
+decimal immediates and with labels (including forward references).
 
-Encoding: 4 bytes (opcode + 24-bit LE immediate).
-- `la r0, addr` → `0x29, lo, mid, hi`
-- `la r1, addr` → `0x2A, lo, mid, hi`
-- `la r2, addr` → `0x2B, lo, mid, hi`
-
-**Impact:** ALL 12 assembler examples and ALL 12 pipeline examples use `la`.
-Without `la`, programs that reference 24-bit addresses (I/O registers at
-`0xFF0000`, UART at `0xFF0100`, function calls via label) cannot be written.
+`la` requires NO changes — just convert hex operands to decimal/negative
+notation. Examples: `0xFF0000` → `-65536`, `0xFF0100` → `-65280`,
+`0x0100` → `256`.
 
 ### 2. Inline Labels (`label: instruction`)
 
@@ -77,109 +75,86 @@ Note: hex in `la` operands is moot since `la` itself is unsupported.
 
 ### Assembler Examples (`src/examples/assembler/`)
 
-| File | `la` | Inline labels | `#` comments | Hex in lc/lcu |
-|---|---|---|---|---|
-| `add.s` | 1 | 1 | - | - |
-| `blink_led.s` | 1 | 1 | - | - |
-| `button_echo.s` | 1 | 1 | - | - |
-| `comments.s` | - | 1 | 2 | - |
-| `countdown.s` | 1 | 1 | - | - |
-| `echo.s` | 5 | - | - | 5 |
-| `fibonacci.s` | 6 | 2 | - | - |
-| `memory_access.s` | 4 | 1 | - | - |
-| `multiply.s` | 4 | 2 | - | - |
-| `nested_calls.s` | 4 | 2 | - | - |
-| `stack_variables.s` | 3 | 1 | - | - |
-| `uart_hello.s` | 7 | 2 | - | - |
+Since `la` is supported by the reference assembler (with decimal operands),
+the remaining incompatibilities are: inline labels, `#` comments, and hex
+immediates.
+
+| File | Inline labels | `#` comments | Hex immediates |
+|---|---|---|---|
+| `add.s` | 1 | - | 1 (in `la`) |
+| `blink_led.s` | 1 | - | 1 (in `la`) |
+| `button_echo.s` | 1 | - | 1 (in `la`) |
+| `comments.s` | 1 | 2 | - |
+| `countdown.s` | 1 | - | 1 (in `la`) |
+| `echo.s` | - | - | 10 (5 in `la`, 5 in `lc`/`lcu`) |
+| `fibonacci.s` | 2 | - | 1 (in `la`) |
+| `memory_access.s` | 1 | - | 4 (in `la`) |
+| `multiply.s` | 2 | - | 1 (in `la`) |
+| `nested_calls.s` | 2 | - | - |
+| `stack_variables.s` | 1 | - | 1 (in `la`) |
+| `uart_hello.s` | 2 | - | 1 (in `la`) |
 
 ### Pipeline Examples (`src/examples/rust_pipeline/*.cor24.s`)
 
-All 12 files use `la` extensively (5-30+ occurrences each). These are compiler
-output from the Rust→MSP430→COR24 pipeline and are not intended to be
-hand-editable or reference-assembler-compatible.
+Compiler output — not intended to be reference-assembler-compatible.
+Use hex immediates in `la` operands but are otherwise standard.
 
-## Proposed Solution: Macro Preprocessor
+## Proposed Solution
 
-### Design
+### Principle: Bug-Compatible Examples
 
-Add a preprocessor pass that expands macros **before** the assembler pass.
-The preprocessor operates on text, emitting standard `.s` syntax. This is a
-single pass — no iteration needed because macros expand to fixed instruction
-sequences with known sizes.
+Examples must assemble with `as24` as shipped. Since `la` IS supported (just
+not with hex operands), the fixes are all trivial text changes.
+
+### Phase 1: Convert Hand-Written Examples (all trivial)
+
+All 12 files need only these mechanical changes:
+
+1. **Split inline labels** — `halt: bra halt` → label on its own line
+2. **Replace `#` comments with `;`** — only `comments.s`
+3. **Convert hex immediates to decimal** — in `la` operands and `lc`/`lcu`
+
+Hex-to-decimal conversions needed:
+- `0xFF0000` → `-65536` (LED I/O register)
+- `0xFF0100` → `-65280` (UART data register)
+- `0xFF0010` → `-65520` (interrupt enable register)
+- `0x0100` → `256`
+- `0x0200` → `512`
+- `0x3F` → `63`, `0x21` → `33`, `0x61` → `97`, `0x7B` → `123`, `0xDF` → `223`
+
+No structural changes needed. All examples can remain `.s` files compatible
+with both assemblers.
+
+### Phase 2 (optional): Preprocessor for .sx Files
+
+If we want to keep hex-immediate syntax as a convenience, a simple text
+preprocessor can expand `.sx` → `.s`:
 
 ```
 Source (.sx)  →  Preprocessor  →  Standard .s  →  Assembler  →  Binary
 ```
 
-### Macro Definitions
+**Single-pass macro expansions (no size changes):**
 
-**`LA` macro** — expands `la rX, value` to the 4-byte instruction encoding
-inline, using `.byte` directives:
-
-```
-; Input:
-        la r0, 0xFF0100
-
-; Preprocessor output:
-        .byte 0x29, 0x00, 0x01, 0xFF
-```
-
-This works because `.byte` emits raw bytes and the assembler already supports
-it. The 4 bytes are the exact encoding of the `la` instruction (opcode byte
-for the destination register + 24-bit LE address). Since the expansion is a
-fixed 4 bytes, all subsequent branch offsets are correct without multiple
-passes.
-
-**Limitation:** `la rX, label` (with a forward reference) cannot be expanded
-by a text preprocessor because the label's address is not known yet. Options:
-- Require labels used with `la` to be defined before use (backward refs only)
-- Two-pass preprocessor: first pass collects label addresses, second expands
-- Accept that `la` with labels requires the extended assembler
-
-**Inline label macro** — expands `label: instruction` to two lines:
-
-```
-; Input:
-halt: bra halt
-
-; Preprocessor output:
-halt:
-        bra halt
-```
-
-This is a trivial text transformation with no size implications.
-
-**Comment normalization** — replace `#` with `;`.
-
-**Hex-to-decimal** — convert `0xNN` immediates in standard instructions to
-decimal.
-
-### File Extensions
-
-| Extension | Meaning |
+| Input | Output |
 |---|---|
-| `.s` | Standard cor24 assembly, compatible with reference `as24` |
-| `.sx` | Extended assembly with macros (`la`, inline labels, etc.) |
-| `.cor24.s` | Compiler-generated pipeline output (extended, not hand-edited) |
+| `halt: bra halt` | `halt:\n        bra halt` |
+| `# comment` | `; comment` |
+| `lc r0, 0x3F` | `lc r0, 63` |
+| `la r0, 0xFF0100` | `la r0, -65280` |
 
-### Implementation Plan
+No instruction size changes, so branch offsets are unaffected.
 
-1. **Phase 1: Fix examples** — Rewrite the 12 hand-written assembler examples
-   to split inline labels onto their own lines and replace `#` comments with
-   `;`. Keep `la` (it's a real instruction the reference should support).
-   Convert hex immediates in `lc`/`lcu` to decimal.
+### Phase 3 (optional): Assembler `--strict` Flag
 
-2. **Phase 2: Preprocessor** — Implement a text-based preprocessor that
-   expands `.sx` files to `.s`. Gate extended features behind this step.
+Add a mode that rejects syntax `as24` wouldn't accept:
+- Rejects inline labels, `#` comments, hex immediates
+- Validates `.s` files are truly as24-compatible
+- Use in CI to prevent regressions
 
-3. **Phase 3: Assembler `--strict` flag** — Add a mode that rejects any
-   syntax the reference assembler wouldn't accept, for validation.
+### Additional Findings from Testing
 
-### Open Questions
-
-- Should we lobby for `la` support in the reference assembler? It's a real
-  hardware instruction. The reference assembler is simply missing it.
-- Should inline labels be considered an error in strict mode, or just a
-  warning? They're purely a syntax convenience with no semantic difference.
-- For `la rX, label`, the preprocessor cannot resolve forward references.
-  Should we accept this limitation or implement a two-pass preprocessor?
+- Reference assembler does NOT support `.byte` directive
+- Reference assembler `nop` = 3 bytes (`00 00 00`), ours = 1 byte (`00`)
+- `jal r1,(r2)` syntax matches between both assemblers
+- `la` with forward label references works in the reference assembler
