@@ -112,6 +112,11 @@ pub fn get_examples() -> Vec<(String, String, String)> {
             include_str!("examples/assembler/fibonacci.s").into(),
         ),
         (
+            "Loop Trace".into(),
+            "Run, Stop, then view Instruction Trace".into(),
+            include_str!("examples/assembler/loop_trace.s").into(),
+        ),
+        (
             "Memory Access".into(),
             "Store to non-adjacent memory blocks".into(),
             include_str!("examples/assembler/memory_access.s").into(),
