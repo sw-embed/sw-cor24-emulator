@@ -10,8 +10,8 @@
     <link rel="stylesheet" href="/cor24-rs/layout-f8cc5459d5d65afa.css" integrity="sha384-VXMRWz98QHgKe2yCiuJ6ZxgQPMTeTIb0Pur/TW25YQrxBFADNu9ljrjPDYj+2rKz"/>
     
 <script type="module">
-import init, * as bindings from '/cor24-rs/cor24-emulator-7ae1ccad72fdef9b.js';
-const wasm = await init({ module_or_path: '/cor24-rs/cor24-emulator-7ae1ccad72fdef9b_bg.wasm' });
+import init, * as bindings from '/cor24-rs/cor24-emulator-ebe4b09c213a9c22.js';
+const wasm = await init({ module_or_path: '/cor24-rs/cor24-emulator-ebe4b09c213a9c22_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -20,7 +20,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-<link rel="modulepreload" href="/cor24-rs/cor24-emulator-7ae1ccad72fdef9b.js" crossorigin="anonymous" integrity="sha384-vV8NNgm+wKEtv9CvXtxe1sraizhmMOYA9kHc4SS9RMAOayZADNvm7N3zwbxM6hnu"><link rel="preload" href="/cor24-rs/cor24-emulator-7ae1ccad72fdef9b_bg.wasm" crossorigin="anonymous" integrity="sha384-851cUd/KJKVdVk3lnto2ikVKCguXodjyu08TDd3dWjb/ppJLEja6TgEcjEBMUMS4" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/cor24-rs/cor24-emulator-ebe4b09c213a9c22.js" crossorigin="anonymous" integrity="sha384-vV8NNgm+wKEtv9CvXtxe1sraizhmMOYA9kHc4SS9RMAOayZADNvm7N3zwbxM6hnu"><link rel="preload" href="/cor24-rs/cor24-emulator-ebe4b09c213a9c22_bg.wasm" crossorigin="anonymous" integrity="sha384-VUxY1ELNUkJu7fKgwqBMY8Ld3pssDfZNm3b1yLDbGJhvu6wChFPaqX4TkscjFhWr" as="fetch" type="application/wasm"></head>
 <body>
 </body>
 </html>
