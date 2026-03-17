@@ -28,6 +28,8 @@
 - Fix nop: encode as 0xFF (matching reference as24), not add r0,r0
   (old encoding had unwanted side effect of doubling r0)
 - Executor treats 0xFF as true no-op (advance PC, no register changes)
+- Add Intel hex literal support (NNh suffix) to match reference as24
+- Add Literals example showing decimal, negative, and Intel hex formats
 
 ## 2026-03-15
 

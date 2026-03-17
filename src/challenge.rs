@@ -112,6 +112,11 @@ pub fn get_examples() -> Vec<(String, String, String)> {
             include_str!("examples/assembler/fibonacci.s").into(),
         ),
         (
+            "Literals".into(),
+            "Decimal, negative, and Intel hex (NNh) number formats".into(),
+            include_str!("examples/assembler/literals.s").into(),
+        ),
+        (
             "Loop Trace".into(),
             "Run, Stop, then view Instruction Trace".into(),
             include_str!("examples/assembler/loop_trace.s").into(),

@@ -376,7 +376,14 @@ impl Assembler {
     fn parse_number(&self, s: &str) -> Option<u32> {
         let s = s.trim();
         if s.starts_with("0x") || s.starts_with("0X") {
+            // C-style hex: 0xFF
             u32::from_str_radix(&s[2..], 16).ok()
+        } else if (s.ends_with('h') || s.ends_with('H'))
+            && s.len() > 1
+            && s.as_bytes()[0].is_ascii_hexdigit()
+        {
+            // Intel-style hex: 0FFh, 2Ah (must start with digit)
+            u32::from_str_radix(&s[..s.len() - 1], 16).ok()
         } else if s.starts_with('-') {
             s.parse::<i32>().ok().map(|v| v as u32)
         } else {
