@@ -1,61 +1,56 @@
 # Changes
 
+## 2026-03-18
+
+- Self-test mode: ?selftest URL runs all 15 examples, checks expected state
+- Fix stale EXAMPLE_PROGRAM: replace hardcoded copy with include_str!
+- Fix Rust Button Echo: add XOR inversion for S2 active-low switch
+- LED duty cycle tooltip restored (accumulates via run loop parameter)
+- Blink LED: balanced 50% duty cycle with editable nop padding
+- ID-based listing auto-scroll: instant jump to current PC during Run
+- Remove scroll-behavior:smooth that caused slow listing scroll lag
+- Log-scale speed slider: 10/s left, 100/s center, 1000/s right
+- Show example name in Program Editor heading
+- LED label " ON"/"OFF" fixed-width to prevent layout shift
+- Remove delay loops from Countdown and Blink LED assembler examples
+- Reduce Rust pipeline delay loops (5000→10 iterations)
+- Per-instruction run loop replaces 500-batch loop (no browser freeze)
+- Extract shared run_one_instruction and callback factories (~540 lines removed)
+
+## 2026-03-17
+
+- Fix nop: encode as 0xFF (matching reference as24), not add r0,r0
+- Executor treats 0xFF as true no-op (advance PC, no register changes)
+- Add Intel hex literal support (NNh suffix) to match reference as24
+- Add Literals example showing decimal, negative, and Intel hex formats
+- Simplify UART TX busy poll: cls r2,z / brt (1 instruction vs 3)
+- Apply cls/brt TX busy optimization to C pipeline examples (fib, sieve)
+- Rewrite Rust fibonacci_iter demo using @cor24 passthrough (16 instructions,
+  zero spills, was ~35 with 14 spill ops per loop iteration)
+- Add translator optimization design doc (docs/translator-optimization.md)
+- Document register spill behavior in Stack Variables demo
+- Cell headers (Source, Assembly, Execution) styled yellow for contrast
+
 ## 2026-03-16
 
+- Comprehensive tutorial: docs/cor24-tutorial.md and web UI Tutorial dialog
+- ISA Reference restyled with tables, CPU State, and Interrupts sections
+- Move Examples/Challenges to context-specific locations above editor/wizard
+- Program Editor fills available height
+- Fix wizard scroll with scrollIntoView for reliable header visibility
+- Add Changes link in web UI footer (links to GitHub CHANGES.md)
+- Update README screenshots: assembler, C, and Rust tabs
+- Backfill CHANGES.md with full project history
 - Add collapsible Instruction Trace panel to Web UI (last 100 entries)
 - Record halt instruction (bra-to-self) in trace before halting
 - Add `trace` command to cor24-dbg CLI debugger
-- Convert all 14 assembler examples to reference as24-compatible syntax
+- Convert all assembler examples to reference as24-compatible syntax
 - Translator emits decimal immediates instead of hex (as24 compat)
-- Regenerate all 13 pipeline demos with decimal immediates
 - Add Assert example with deliberate bug for debugging demo
 - Add Loop Trace example demonstrating Run/Stop/Trace workflow
 - Update Multiply example: native mul + loop, with assertions
 - Add assembler range check for lc (0..127) and lcu (0..255)
 - Document assembler compatibility analysis (docs/extended-assembler.md)
-- Add Changes link in web UI footer (links to GitHub CHANGES.md)
-- Update README screenshots: assembler, C, and Rust tabs
-- Backfill CHANGES.md with full project history (Feb 25 - Mar 16)
-- Comprehensive tutorial: docs/cor24-tutorial.md and web UI Tutorial dialog
-  (registers, addressing modes, all instruction groups, I/O, interrupts, calling convention)
-- ISA Reference restyled with tables, CPU State, and Interrupts sections
-- Move Examples/Challenges to context-specific locations above editor/wizard
-- Program Editor fills available height
-- Fix wizard scroll with scrollIntoView for reliable header visibility
-
-## 2026-03-17
-
-- Fix nop: encode as 0xFF (matching reference as24), not add r0,r0
-  (old encoding had unwanted side effect of doubling r0)
-- Executor treats 0xFF as true no-op (advance PC, no register changes)
-- Add Intel hex literal support (NNh suffix) to match reference as24
-- Add Literals example showing decimal, negative, and Intel hex formats
-- Simplify UART TX busy poll: cls r2,z / brt (3 instructions → 1)
-  per Luther Johnson's feedback — lb sign-extends bit 7, so negative = busy
-- Apply cls/brt TX busy optimization to C pipeline examples (fib, sieve)
-- Rewrite Rust fibonacci_iter demo using @cor24 passthrough — 16 instructions
-  with zero spills (was ~35 with 14 spill ops per loop iteration)
-- Add translator optimization design doc (docs/translator-optimization.md)
-- Per-instruction run loop with speed slider (1ms-200ms per instruction)
-  replaces 500-batch loop that froze the browser on slower machines
-- Extract shared run_one_instruction(), eliminating ~300 lines of
-  duplicated run loop code across the three tabs
-- Extract shared callback factories (make_step/run/switch/uart_send/
-  uart_clear_callback), eliminating another ~225 lines of duplication
-- Cell headers (Source, Assembly, Execution) styled yellow for contrast
-- Document register spill behavior in Stack Variables demo
-
-## 2026-03-18
-
-- Per-instruction run loop with log-scale speed slider (10-1000/s)
-- Refactored callbacks: shared factories eliminate ~540 lines duplication
-- Remove delay loops from Countdown and Blink LED assembler examples
-- Reduce Rust pipeline delay loops (5000→10 iterations)
-- Show example name in Program Editor heading
-- LED label " ON"/"OFF" fixed-width to prevent layout shift
-- ID-based listing auto-scroll: instant jump to current PC during Run
-- Yellow cell headers for contrast
-- Log-scale speed slider: 10/s left, 100/s center, 1000/s right
 
 ## 2026-03-15
 
@@ -64,7 +59,6 @@
 - UART hex dump wraps at 8 bytes/line instead of one long line
 - Remove max-height cap on code blocks in C/Rust pipeline tabs
 - Fix stale load generation counter causing empty source panel
-- Add load_generation prop to ProgramArea for re-select same example
 - Fix Step dropdown misalignment in notebook debug cells
 - Reorder tabs alphabetically: Assembler, C, Rust
 
@@ -76,7 +70,6 @@
 - Add C pipeline examples: fib, sieve (with printf runtime stubs)
 - Add .comm directive and .byte fix to assembler
 - Migrate assembler examples to jal calling convention
-- Regenerate pipeline demos with jal calling convention
 - Add instruction trace ring buffer and CLI --trace/--step modes
 - Document Luther Johnson's COR24 calling convention feedback
 
