@@ -74,32 +74,28 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
     // Mirror of Rc<Cell> speed for display re-rendering
     let speed_display = use_state(|| props.run_speed_ms.as_ref().map_or(10, |rc| rc.get()));
 
-    // Track PC for auto-scroll
-    let last_pc = use_state(|| 0u32);
+    // Auto-scroll assembly listing to keep current instruction visible
     {
         let pc = state.pc;
-        let last_pc = last_pc.clone();
+        let instruction_count = state.instruction_count;
         let scroll_id = props.listing_scroll_id.clone().unwrap_or_else(|| "debug-asm-listing-scroll".to_string());
-        use_effect_with(pc, move |&current_pc| {
-            if current_pc != *last_pc {
-                last_pc.set(current_pc);
-                if let Some(window) = web_sys::window()
-                    && let Some(document) = window.document()
-                    && let Some(container) = document.get_element_by_id(&scroll_id)
-                    && let Some(element) = container.query_selector(".asm-line.current-line").ok().flatten()
-                {
-                    let element_html: &web_sys::HtmlElement = element.unchecked_ref();
-                    let container_html: &web_sys::HtmlElement = container.unchecked_ref();
-                    let element_top = element_html.offset_top();
-                    let container_height = container_html.client_height();
-                    let container_scroll = container.scroll_top();
-                    let element_bottom = element_top + 20;
-                    let visible_top = container_scroll;
-                    let visible_bottom = container_scroll + container_height;
-                    if element_top < visible_top || element_bottom > visible_bottom {
-                        let target_scroll = element_top - (container_height / 2);
-                        container.set_scroll_top(target_scroll.max(0));
-                    }
+        use_effect_with((pc, instruction_count), move |_| {
+            if let Some(window) = web_sys::window()
+                && let Some(document) = window.document()
+                && let Some(container) = document.get_element_by_id(&scroll_id)
+                && let Some(element) = container.query_selector(".asm-line.current-line").ok().flatten()
+            {
+                let element_html: &web_sys::HtmlElement = element.unchecked_ref();
+                let container_html: &web_sys::HtmlElement = container.unchecked_ref();
+                let element_top = element_html.offset_top();
+                let container_height = container_html.client_height();
+                let container_scroll = container.scroll_top();
+                let element_bottom = element_top + 20;
+                let visible_top = container_scroll;
+                let visible_bottom = container_scroll + container_height;
+                if element_top < visible_top || element_bottom > visible_bottom {
+                    let target_scroll = element_top - (container_height / 3);
+                    container.set_scroll_top(target_scroll.max(0));
                 }
             }
         });
@@ -125,7 +121,7 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
         let status = if duty > 0.01 && duty < 0.99 {
             format!("{:.0}%", duty * 100.0)
         } else if duty >= 0.99 {
-            "ON".to_string()
+            " ON".to_string()
         } else {
             "OFF".to_string()
         };
@@ -138,7 +134,7 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
     } else {
         // Paused: show actual binary LED state
         if led_is_on {
-            ("led led-on led-large", "ON".to_string(), String::new())
+            ("led led-on led-large", " ON".to_string(), String::new())
         } else {
             ("led led-off led-large", "OFF".to_string(), String::new())
         }
