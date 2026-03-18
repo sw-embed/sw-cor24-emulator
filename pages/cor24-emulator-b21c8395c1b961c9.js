@@ -650,10 +650,6 @@ function __wbg_get_imports() {
         __wbg_preventDefault_d8dbb4013b32560a: function(arg0) {
             arg0.preventDefault();
         },
-        __wbg_querySelector_1a3f1db99442c13e: function() { return handleError(function (arg0, arg1, arg2) {
-            const ret = arg0.querySelector(getStringFromWasm0(arg1, arg2));
-            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
-        }, arguments); },
         __wbg_queueMicrotask_2c8dfd1056f24fdc: function(arg0) {
             const ret = arg0.queueMicrotask;
             return ret;
@@ -814,12 +810,12 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 604, function: Function { arguments: [NamedExternref("KeyboardEvent")], shim_idx: 592, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 639, function: Function { arguments: [NamedExternref("KeyboardEvent")], shim_idx: 640, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
             const ret = makeClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h7624b15d7ed565ae, wasm_bindgen__convert__closures_____invoke__h4dc0df3a82744b86);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 604, function: Function { arguments: [NamedExternref("MouseEvent")], shim_idx: 592, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 639, function: Function { arguments: [NamedExternref("MouseEvent")], shim_idx: 640, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
             const ret = makeClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h7624b15d7ed565ae, wasm_bindgen__convert__closures_____invoke__h4dc0df3a82744b86_1);
             return ret;
         },

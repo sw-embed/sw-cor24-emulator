@@ -271,7 +271,7 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
                                     } else {
                                         None
                                     };
-                                    let is_current = addr.map_or(false, |a| a == state.pc);
+                                    let is_current = addr == Some(state.pc);
                                     let class = if is_current { "asm-line current-line" } else { "asm-line" };
                                     let id = addr.map(|a| format!("asm-{:04X}", a));
                                     html! {

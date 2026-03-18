@@ -1902,7 +1902,6 @@ header h1 {
     min-height: 600px;
     max-height: 750px;
     overflow-y: auto;
-    scroll-behavior: smooth;
 }
 
 /* Ensure listing scroll container doesn't cause parent scroll */

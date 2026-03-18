@@ -47,8 +47,15 @@
 
 ## 2026-03-18
 
-- Rebuild pages with per-instruction run loop, speed slider, refactored
-  callbacks, yellow cell headers, and all Mar 17 changes
+- Per-instruction run loop with log-scale speed slider (10-1000/s)
+- Refactored callbacks: shared factories eliminate ~540 lines duplication
+- Remove delay loops from Countdown and Blink LED assembler examples
+- Reduce Rust pipeline delay loops (5000→10 iterations)
+- Show example name in Program Editor heading
+- LED label " ON"/"OFF" fixed-width to prevent layout shift
+- ID-based listing auto-scroll: instant jump to current PC during Run
+- Yellow cell headers for contrast
+- Log-scale speed slider: 10/s left, 100/s center, 1000/s right
 
 ## 2026-03-15
 
