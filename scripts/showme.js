@@ -44,7 +44,7 @@
         const steps = mode === 'rust' ? [
             { desc: 'Click Rust tab', sel: '.tab-bar .tab:nth-child(3)', delay: 1500 },
             { desc: 'Open Examples', sel: '.rust-tab-content.full-width .wizard-header-btn .toolbar-btn', delay: 1500 },
-            { desc: 'Select Blink LED', sel: '#rust-examples .example-item:nth-child(1)', delay: 2000 },
+            { desc: 'Select Blink LED', sel: '#rust-examples .example-item:nth-child(2)', delay: 2000 },
             { desc: 'Click Compile', sel: '.rust-tab-content.full-width .wizard-action-btn', delay: 2000 },
             { desc: 'Click Translate', sel: '.rust-tab-content.full-width .wizard-action-btn', delay: 2000 },
             { desc: 'Click Assemble', sel: '.rust-tab-content.full-width .wizard-action-btn', delay: 2000 },
