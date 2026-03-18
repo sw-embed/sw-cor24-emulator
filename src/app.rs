@@ -1560,9 +1560,15 @@ fn run_one_instruction(
     uart_handle: Rc<RefCell<VecDeque<u8>>>,
     uart_clear_handle: Rc<Cell<bool>>,
     speed_handle: Rc<Cell<u32>>,
+    led_on_count: u64,
 ) {
     if stop_handle.get() {
-        state_handle.set(capture_cpu_state(&current_cpu, &state_handle));
+        let mut s = capture_cpu_state(&current_cpu, &state_handle);
+        s.led_on_count = led_on_count;
+        s.led_duty_cycle = if s.instruction_count > 0 {
+            led_on_count as f32 / s.instruction_count as f32
+        } else { 0.0 };
+        state_handle.set(s);
         cpu_handle.set(current_cpu);
         running_handle.set(false);
         return;
@@ -1579,21 +1585,18 @@ fn run_one_instruction(
         }
     }
 
-    // Execute instructions based on speed setting.
-    // Slow (delay >= 50ms): 1 instruction per yield — fully visible stepping.
-    // Medium (10-49ms): small batches for responsiveness.
-    // Fast (< 10ms): larger batches for programs with loops.
     let delay = speed_handle.get().clamp(1, 100);
     let batch = if delay >= 50 {
         1u32
     } else if delay >= 10 {
         ((51 - delay) / 5).max(1)
     } else {
-        let d = 11 - delay;  // delay is 1..9, d is 2..10
+        let d = 11 - delay;
         (d * d).max(1)
     };
 
     let mut halted = false;
+    let mut batch_led_on = 0u64;
     for _ in 0..batch {
         if current_cpu.is_halted() {
             halted = true;
@@ -1607,10 +1610,18 @@ fn run_one_instruction(
             halted = true;
             break;
         }
+        if current_cpu.get_led_value() & 1 == 1 {
+            batch_led_on += 1;
+        }
     }
 
-    // Update full state after batch (educational visualization)
-    state_handle.set(capture_cpu_state(&current_cpu, &state_handle));
+    let total_on = led_on_count + batch_led_on;
+    let mut s = capture_cpu_state(&current_cpu, &state_handle);
+    s.led_on_count = total_on;
+    s.led_duty_cycle = if s.instruction_count > 0 {
+        total_on as f32 / s.instruction_count as f32
+    } else { 0.0 };
+    state_handle.set(s);
     cpu_handle.set(current_cpu.clone());
 
     if halted {
@@ -1618,7 +1629,7 @@ fn run_one_instruction(
     } else {
         let yield_delay = delay.max(1);
         gloo::timers::callback::Timeout::new(yield_delay, move || {
-            run_one_instruction(current_cpu, cpu_handle, running_handle, state_handle, stop_handle, switch_handle, uart_handle, uart_clear_handle, speed_handle);
+            run_one_instruction(current_cpu, cpu_handle, running_handle, state_handle, stop_handle, switch_handle, uart_handle, uart_clear_handle, speed_handle, total_on);
         }).forget();
     }
 }
@@ -1669,7 +1680,7 @@ fn make_run_callback(
 
         gloo::timers::callback::Timeout::new(0, move || {
             run_one_instruction(current_cpu, cpu_handle, running_handle, state_handle,
-                stop_handle, switch_handle, uart_handle, uart_clear_handle, speed_handle);
+                stop_handle, switch_handle, uart_handle, uart_clear_handle, speed_handle, 0);
         }).forget();
     })
 }
