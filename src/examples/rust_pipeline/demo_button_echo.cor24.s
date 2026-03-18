@@ -57,13 +57,13 @@ demo_button_echo:
     la      r2, mmio_read
     jal     r1, (r2)
     pop     r1
-    sw      r0, 24(fp)
     push    r0
-    lw      r0, 24(fp)
-    lc      r2, 1
-    and     r0, r2
+    lc      r0, 1
     sw      r0, 24(fp)
     pop     r0
+    la      r0, -1
+    xor     r0, r0
+    and     spill_13, r0
     la      r0, -65536
     ; call mmio_write
     push    r1

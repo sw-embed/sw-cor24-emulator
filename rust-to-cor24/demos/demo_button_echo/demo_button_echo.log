@@ -1,42 +1,3 @@
-Assembled 123 bytes
-Running (speed: max IPS, time limit: 2s)...
-
-LEDs: ○○○○○○○[91m●[0m  (0x01)  
-Executed 171420000 instructions
-
-=== Registers ===
-  PC:  0x000063    C: 0
-  r0:  0x000001  (       1)
-  r1:  0x000048  (      72)
-  r2:  0x000061  (      97)
-  fp:  0xFEEC00
-  sp:  0xFEEBFA
-
-=== Emulator ===
-  Instructions: 171420000
-  Halted: false
-
-=== SRAM 000000-0FFFFF (1 MB) ===
-  000000: 65 29 69 00 00 26 44 50 7E 2B 70 00 00 D2 7A 44  |e)i..&DP~+p...zD|
-  000010: 41 7E 2B 70 00 00 D2 7A 44 4E 7E 2B 70 00 00 D2  |A~+p...zDN~+p...|
-  000020: 7A 44 49 7E 2B 70 00 00 D2 7A 44 43 7E 2B 70 00  |zDI~+p...zDC~+p.|
-  000030: 00 D2 7A 44 0A 7E 2B 70 00 00 D2 7A 13 FC 29 00  |..zD.~+p...z..).|
-  000040: 00 FF 7E 2B 61 00 00 D2 7A A6 18 7D 4D 18 46 01  |..~+a...z..}M.F.|
-  000050: 0E A6 18 79 29 00 00 FF 7E 2B 64 00 00 D2 7A 13  |...y)...~+d...z.|
-  000060: DB 38 00 27 55 18 87 00 27 7E 2B 3E 00 00 D2 7A  |.8.'U...'~+>...z|
-  000070: A6 18 29 00 01 FF 2B 64 00 00 28 00 00 00 00 00  |..)...+d..(.....|
-  000080..0FFFFF: 1048448 bytes all zero
-
-=== Unmapped 100000-FEDDFF (14.9 MB, not installed) ===
-
-=== EBR FEE000-FEFFFF (8 KB, stack) ===
-  FEE000..FEEBEF: 3056 bytes all zero
-  FEEBF0: 00 00 00 00 00 00 00 00 00 00 6F 00 00 00 00 00  |..........o.....|
-  FEEC00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
-  FEEC10: 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00  |................|
-  FEEC20..FEFFFF: 5088 bytes all zero
-
-=== I/O FF0000-FFFFFF (64 KB, memory-mapped peripherals) ===
-  FF0000 LED:  0x01  [.......*]  BTN S2: released
-  FF0010 IntEn:  0x00  UART RX IRQ: disabled
-  FF0100 UART:   status=0x02  RX ready: no  CTS: yes  TX busy: no
+Assembly errors:
+  Line 65: xor r0,r0 not supported
+  Line 66: Invalid and operands

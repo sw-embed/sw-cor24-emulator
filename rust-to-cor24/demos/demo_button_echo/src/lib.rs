@@ -28,8 +28,8 @@ pub unsafe fn uart_putc(ch: u16) {
 #[no_mangle]
 pub unsafe fn demo_button_echo() -> ! {
     loop {
-        let btn = mmio_read(LED_ADDR);
-        let led = btn & 1;
+        let btn = mmio_read(LED_ADDR);  // S2: 1=released, 0=pressed
+        let led = (btn ^ 1) & 1;        // invert: pressed->ON, released->OFF
         mmio_write(LED_ADDR, led);
     }
 }

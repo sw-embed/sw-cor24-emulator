@@ -30,8 +30,8 @@ demo_button_echo:
 .LBB1_1:
 	mov	#-256, r12
 	call	#mmio_read
-	mov	r12, r13
-	and	#1, r13
+	mov	#1, r13
+	bic	r12, r13
 	mov	#-256, r12
 	call	#mmio_write
 	jmp	.LBB1_1
