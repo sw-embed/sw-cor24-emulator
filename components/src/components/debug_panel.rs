@@ -113,7 +113,7 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
     let led_is_on = (state.led_value & 1) == 1;
     let duty = state.led_duty_cycle;
     let led_class = if led_is_on { "led led-on led-large" } else { "led led-off led-large" };
-    let led_status = if led_is_on { "\u{00a0}ON" } else { "OFF" };
+    let led_status = if led_is_on { "_ON" } else { "OFF" };
     let led_tooltip = if state.instruction_count > 0 {
         format!("LED D2: {} (duty cycle: {:.0}%)", led_status.trim(), duty * 100.0)
     } else {
