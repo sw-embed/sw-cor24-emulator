@@ -183,29 +183,13 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
         Callback::from(move |_| on_stop.emit(()))
     };
 
-    // Compute speed slider display values from the display mirror state
-    let ms = (*speed_display).clamp(1, 100);
-    let (batch, ips) = if ms >= 50 {
-        (1u32, 1000 / ms)
-    } else if ms >= 10 {
-        let b = ((51 - ms) / 5).max(1);
-        (b, b * (1000 / ms))
-    } else {
-        let d = 11 - ms;  // ms is 1..9 here, so d is 2..10
-        let b = (d * d).max(1);
-        (b, b * (1000 / ms))
-    };
-    let speed_tip = if batch <= 1 {
-        format!("{} instr/sec ({}ms delay)", ips, ms)
-    } else {
-        format!("~{} instr/sec (batch {}, {}ms)", ips, batch, ms)
-    };
-    let speed_val = if batch <= 1 {
-        format!("{}/s", ips)
-    } else {
-        format!("~{}/s", ips)
-    };
-    let speed_slider_pos = format!("{}", 101u32.saturating_sub(ms.min(100)));
+    // Read speed from Rc<Cell> (always current). speed_display forces re-render on change.
+    let _ = *speed_display; // trigger re-render dependency
+    let ms = props.run_speed_ms.as_ref().map_or(10u32, |rc| rc.get()).clamp(1, 100);
+    let ips = 1000 / ms;
+    let speed_tip = format!("{}ms per instruction ({}/sec)", ms, ips);
+    let speed_val = format!("{}/s", ips);
+    let speed_slider_pos = format!("{}", 101 - ms);
 
     let on_reset_click = {
         let on_reset = props.on_reset.clone();
