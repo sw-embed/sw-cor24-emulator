@@ -5,10 +5,10 @@ Running (speed: max IPS, time limit: 2s)...
 
 UART output: ?
 
-Executed 212350000 instructions
+Executed 204460000 instructions
 
 === Registers ===
-  PC:  0x00006E    C: 1
+  PC:  0x000072    C: 1
   r0:  0x000000  (       0)
   r1:  0xFF0010  (16711696)
   r2:  0x000045  (      69)
@@ -16,7 +16,7 @@ Executed 212350000 instructions
   sp:  0xFEEC00
 
 === Emulator ===
-  Instructions: 212350000
+  Instructions: 204460000
   Halted: false
 
 === SRAM 000000-0FFFFF (1 MB) ===

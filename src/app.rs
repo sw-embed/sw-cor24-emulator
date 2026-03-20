@@ -1243,9 +1243,9 @@ assemble, and step through COR24 code in your browser.</p>
 <h4>Registers</h4>
 <table style="font-size:0.85em; margin-bottom:8px">
 <tr><td><code>r0, r1, r2</code></td><td>General purpose (24-bit)</td></tr>
-<tr><td><code>fp (r3)</code></td><td>Frame pointer</td></tr>
+<tr><td><code>fp</code></td><td>Frame pointer</td></tr>
 <tr><td><code>sp (r4)</code></td><td>Stack pointer (init: 0xFEEC00, grows down)</td></tr>
-<tr><td><code>z (r5)</code></td><td>Always zero — use in compares: <code>ceq r0,z</code></td></tr>
+<tr><td><code>z</code></td><td>Always zero — use in compares: <code>ceq r0,z</code></td></tr>
 <tr><td><code>iv (r6)</code></td><td>Interrupt vector (ISR address)</td></tr>
 <tr><td><code>ir (r7)</code></td><td>Interrupt return address</td></tr>
 </table>
@@ -1375,11 +1375,11 @@ See <a href="https://makerlisp.com" target="_blank">makerlisp.com</a> for the ha
 <tr><td><code>r0</code></td><td></td><td>24-bit</td><td>General purpose</td></tr>
 <tr><td><code>r1</code></td><td></td><td>24-bit</td><td>General purpose / return address (jal convention)</td></tr>
 <tr><td><code>r2</code></td><td></td><td>24-bit</td><td>General purpose</td></tr>
-<tr><td><code>r3</code></td><td>fp</td><td>24-bit</td><td>Frame pointer — base for stack-frame locals</td></tr>
-<tr><td><code>r4</code></td><td>sp</td><td>24-bit</td><td>Stack pointer — init 0xFEEC00, grows downward (3 bytes per push)</td></tr>
-<tr><td><code>r5</code></td><td>z</td><td>24-bit</td><td>Hardwired to zero. Readable in compares: <code>ceq r0, z</code></td></tr>
-<tr><td><code>r6</code></td><td>iv</td><td>24-bit</td><td>Interrupt vector — address of interrupt service routine</td></tr>
-<tr><td><code>r7</code></td><td>ir</td><td>24-bit</td><td>Interrupt return — saved PC when interrupt fires. Return with <code>jmp (ir)</code></td></tr>
+<tr><td><code>fp</code></td><td></td><td>24-bit</td><td>Frame pointer — base for stack-frame locals</td></tr>
+<tr><td><code>sp</code></td><td></td><td>24-bit</td><td>Stack pointer — init 0xFEEC00, grows downward (3 bytes per push)</td></tr>
+<tr><td><code>z</code></td><td></td><td>24-bit</td><td>Hardwired to zero. Readable in compares: <code>ceq r0, z</code></td></tr>
+<tr><td><code>iv</code></td><td></td><td>24-bit</td><td>Interrupt vector — address of interrupt service routine</td></tr>
+<tr><td><code>ir</code></td><td></td><td>24-bit</td><td>Interrupt return — saved PC when interrupt fires. Return with <code>jmp (ir)</code></td></tr>
 </table>
 <p>Only <strong>r0, r1, r2</strong> can be destinations for most ALU/load instructions.
 <strong>fp</strong> can be pushed/popped and used as a memory base register.
@@ -1536,7 +1536,7 @@ const HELP_CONTENT: &str = r#"
     <li>Labels end with colon: <code>loop:</code></li>
     <li>Comments start with semicolon: <code>; comment</code></li>
     <li>Numbers: decimal (42), hex (0x2A)</li>
-    <li>Register names: r0-r7, fp, sp, z, iv, ir</li>
+    <li>Register names: r0, r1, r2, fp, sp, z, iv, ir</li>
 </ul>
 
 <h4>Calling Convention:</h4>

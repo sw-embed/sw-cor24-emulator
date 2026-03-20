@@ -8,7 +8,7 @@
 
 ; --- Setup interrupt vector ---
         la      r0, isr
-        mov     iv, r0          ; r6 = ISR address
+        mov     iv, r0          ; iv = ISR address
 
 ; --- Enable UART RX interrupt ---
         la      r1, -65520

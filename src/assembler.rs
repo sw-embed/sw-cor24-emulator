@@ -364,11 +364,11 @@ impl Assembler {
             "r0" => Some(0),
             "r1" => Some(1),
             "r2" => Some(2),
-            "r3" | "fp" => Some(3),
-            "r4" | "sp" => Some(4),
-            "r5" | "z" | "c" => Some(5), // z=zero for comparisons, c=condition flag for mov
-            "r6" | "iv" => Some(6),
-            "r7" | "ir" => Some(7),
+            "fp" => Some(3),
+            "sp" => Some(4),
+            "z" | "c" => Some(5), // z=zero for comparisons, c=condition flag for mov
+            "iv" => Some(6),
+            "ir" => Some(7),
             _ => None,
         }
     }

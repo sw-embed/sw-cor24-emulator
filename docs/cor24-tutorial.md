@@ -26,11 +26,11 @@ down to COR24 machine code.
 | r0 | — | General purpose |
 | r1 | — | General purpose (also return address for jal) |
 | r2 | — | General purpose |
-| r3 | fp | Frame pointer |
-| r4 | sp | Stack pointer (init: 0xFEEC00) |
-| r5 | z | Always zero; used in compares (ceq r0,z) |
-| r6 | iv | Interrupt vector (ISR address) |
-| r7 | ir | Interrupt return address |
+| fp | — | Frame pointer |
+| sp | — | Stack pointer (init: 0xFEEC00) |
+| z | — | Always zero; used in compares (ceq r0,z) |
+| iv | — | Interrupt vector (ISR address) |
+| ir | — | Interrupt return address |
 
 Only r0, r1, r2 can be used as destinations for most instructions.
 The sp grows downward (push decrements, pop increments).

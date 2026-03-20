@@ -80,7 +80,7 @@ start:
     jal     r1, (r2)
     pop     r1
     la r0, isr_handler
-    mov r6, r0
+    mov iv, r0
     lc r0, 1
     la r1, -65520
     sb r0, 0(r1)

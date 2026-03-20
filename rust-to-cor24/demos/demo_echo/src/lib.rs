@@ -97,7 +97,7 @@ pub unsafe fn start() -> ! {
     // Set interrupt vector to isr_handler
     core::arch::asm!(
         "; @cor24: la r0, isr_handler",
-        "; @cor24: mov r6, r0",
+        "; @cor24: mov iv, r0",
     );
 
     // Enable UART RX interrupt (bit 0 of 0xFF0010)

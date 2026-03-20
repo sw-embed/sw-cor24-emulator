@@ -73,7 +73,7 @@ start:
 	call	#uart_putc
 	;APP
 	; @cor24: la r0, isr_handler
-	; @cor24: mov r6, r0
+	; @cor24: mov iv, r0
 	;NO_APP
 	;APP
 	; @cor24: lc r0, 1
