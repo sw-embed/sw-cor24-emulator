@@ -458,8 +458,13 @@ fn zero_summary(gap_start: u32, gap_end: u32) -> Html {
 /// Render a single non-zero memory row with heatmap coloring.
 /// `prev` and `prev_prev` are the SparseMemory from prior steps for change detection.
 fn sparse_data_row(addr: u32, data: &[u8], prev: &SparseMemory, prev_prev: &SparseMemory) -> Html {
+    // ASCII tooltip: printable bytes shown as-is, others as '.'
+    let ascii: String = data.iter()
+        .map(|&b| if (0x20..0x7F).contains(&b) { b as char } else { '.' })
+        .collect();
+    let tooltip = format!("{:06X}: |{}|", addr, ascii);
     html! {
-        <div class="memory-row">
+        <div class="memory-row" data-tooltip={tooltip}>
             <span class="memory-addr">{format!("{:06X}: ", addr)}</span>
             {for data.iter().enumerate().map(|(j, byte)| {
                 let a = addr + j as u32;
@@ -544,8 +549,12 @@ fn format_memory_dump_all(data: &[u8], prev: &[u8], prev_prev: &[u8], base_addr:
         <>
             {for data.chunks(16).enumerate().map(|(i, chunk)| {
                 let addr = base_addr + (i * 16) as u32;
+                let ascii: String = chunk.iter()
+                    .map(|&b| if (0x20..0x7F).contains(&b) { b as char } else { '.' })
+                    .collect();
+                let tooltip = format!("{:06X}: |{}|", addr, ascii);
                 html! {
-                    <div class="memory-row">
+                    <div class="memory-row" data-tooltip={tooltip}>
                         <span class="memory-addr">{format!("{:06X}: ", addr)}</span>
                         {for chunk.iter().enumerate().map(|(j, byte)| {
                             let idx = i * 16 + j;
