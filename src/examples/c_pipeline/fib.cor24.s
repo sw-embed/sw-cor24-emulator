@@ -1,5 +1,5 @@
 ; Fibonacci — COR24 C compiler output + runtime stubs
-; Source: fib.c compiled by Luther Johnson's cc24/as24 toolchain
+; Source: fib.c compiled by MakerLisp's cc24/as24 toolchain
 ; Calling convention: push fp,r2,r1; mov fp,sp; args on stack at 9(fp)
 ;
 ; _fib and _main are authentic compiler output (fib(10) variant).

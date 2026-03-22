@@ -1,5 +1,5 @@
 ; Sieve of Eratosthenes — COR24 C compiler output
-; Source: sieve.c compiled by Luther Johnson's cc24/as24 toolchain
+; Source: sieve.c compiled by MakerLisp's cc24/as24 toolchain
 ; Calling convention: push fp,r2,r1; mov fp,sp; args on stack at 9(fp)
 ;
 ; All functions are authentic compiler output.
