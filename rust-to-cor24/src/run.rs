@@ -183,6 +183,7 @@ struct CliArgs {
     step: bool,                      // step mode: print each instruction
     uart_never_ready: bool,          // UART TX never becomes ready (test polling)
     terminal: bool,                  // bridge stdin/stdout to UART
+    echo: bool,                      // echo stdin to stdout in terminal mode
 }
 
 fn parse_args() -> CliArgs {
@@ -200,6 +201,7 @@ fn parse_args() -> CliArgs {
         step: false,
         uart_never_ready: false,
         terminal: false,
+        echo: false,
     };
 
     let mut i = 1;
@@ -288,6 +290,9 @@ fn parse_args() -> CliArgs {
             }
             "--terminal" => {
                 cli.terminal = true;
+            }
+            "--echo" => {
+                cli.echo = true;
             }
             _ => {
                 if cli.command.is_empty() && !args[i].starts_with('-') {
@@ -545,7 +550,7 @@ fn set_raw_mode() -> Result<TermiosGuard, String> {
 }
 
 /// Run the emulator in terminal mode: stdin→UART RX, UART TX→stdout.
-fn run_terminal_mode(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_instructions: i64) -> u64 {
+fn run_terminal_mode(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_instructions: i64, echo: bool) -> u64 {
     let is_tty = unsafe { libc::isatty(libc::STDIN_FILENO) } != 0;
 
     let _guard = if is_tty {
@@ -643,6 +648,7 @@ fn run_terminal_mode(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_in
                 libc::read(stdin_fd, read_buf.as_mut_ptr() as *mut libc::c_void, read_buf.len())
             };
             if n > 0 {
+                let mut did_echo = false;
                 for &b in &read_buf[..n as usize] {
                     if b == 0x1D {
                         // Ctrl-] — exit
@@ -654,6 +660,18 @@ fn run_terminal_mode(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_in
                     if stdin_buf.len() < 4096 {
                         stdin_buf.push_back(b);
                     }
+                    if echo {
+                        match b {
+                            b'\r' | b'\n' => { let _ = stdout.write_all(b"\r\n"); }
+                            0x08 | 0x7F => { let _ = stdout.write_all(b"\x08 \x08"); }
+                            0x20..=0x7E => { let _ = stdout.write_all(&[b]); }
+                            _ => {} // don't echo control characters
+                        }
+                        did_echo = true;
+                    }
+                }
+                if did_echo {
+                    let _ = stdout.flush();
                 }
             } else if n == 0 && !is_tty {
                 // EOF on piped stdin
@@ -717,6 +735,7 @@ fn main() {
         println!("  --uart-never-ready   UART TX stays busy forever (test polling)");
         println!("  --entry, -e <label>  Set entry point to label address");
         println!("  --terminal           Bridge stdin/stdout to UART (interactive mode)");
+        println!("  --echo               Local echo in terminal mode (for programs that don't echo)");
         println!();
         println!("Example:");
         println!("  cor24-run --demo --speed 100000 --time 10");
@@ -808,6 +827,11 @@ fn main() {
                 }
             }
 
+            if cli.echo && !cli.terminal {
+                eprintln!("Error: --echo requires --terminal");
+                return;
+            }
+
             if cli.terminal {
                 // Validate incompatible flags
                 if !cli.uart_input.is_empty() {
@@ -822,7 +846,7 @@ fn main() {
                 let speed = if cli.speed == DEFAULT_SPEED { 0 } else { cli.speed };
                 let time_limit = if cli.time_limit == DEFAULT_TIME_LIMIT { 0.0 } else { cli.time_limit };
 
-                let instructions = run_terminal_mode(&mut emu, speed, time_limit, cli.max_instructions);
+                let instructions = run_terminal_mode(&mut emu, speed, time_limit, cli.max_instructions, cli.echo);
 
                 eprintln!("Executed {} instructions", instructions);
                 if cli.trace > 0 {
