@@ -30,8 +30,10 @@ impl WasmCpu {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         console_error_panic_hook::set_once();
+        let mut emu = EmulatorCore::new();
+        emu.set_uart_tx_busy_cycles(0); // instant TX in WASM — no busy-wait needed
         Self {
-            emu: EmulatorCore::new(),
+            emu,
             last_result: None,
         }
     }
@@ -39,11 +41,13 @@ impl WasmCpu {
     /// Reset the CPU to initial state (preserves memory)
     pub fn reset(&mut self) {
         self.emu.reset();
+        self.emu.set_uart_tx_busy_cycles(0);
     }
 
     /// Hard reset - clears memory too
     pub fn hard_reset(&mut self) {
         self.emu.hard_reset();
+        self.emu.set_uart_tx_busy_cycles(0);
         self.last_result = None;
     }
 

@@ -413,6 +413,12 @@ impl EmulatorCore {
         &self.cpu.trace
     }
 
+    /// Set UART TX busy duration (cycles after each write before TX is ready again).
+    /// Set to 0 for instant TX (no busy wait needed).
+    pub fn set_uart_tx_busy_cycles(&mut self, cycles: u8) {
+        self.cpu.io.uart_tx_busy_cycles = cycles;
+    }
+
     /// Set UART TX never-ready mode (for testing poll-before-write discipline)
     pub fn set_uart_never_ready(&mut self, never_ready: bool) {
         self.cpu.io.uart_never_ready = never_ready;
