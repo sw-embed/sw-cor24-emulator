@@ -1,7 +1,7 @@
 ; led_blink.s - Blink LED D2 five times, printing 'L' each toggle
-; LED I/O at 0xFF0000 (bit 0 = LED D2)
+; LED I/O at 0xFF0000 (bit 0 = LED D2, active-low: 0=ON, 1=OFF)
 ; UART data at 0xFF0100
-; Reads button S2 state, toggles LED via XOR, prints 'L' to UART
+; Toggles LED via XOR, prints 'L' to UART each toggle
 ; After 5 blinks, halts by spinning forever
 ; Expected output: "LLLLL"
 
@@ -12,16 +12,16 @@ _main:
 	lc	r0,5
 	sw	r0,-3(fp)	; blink counter = 5
 
+	lc	r1,1		; r1 = LED state (start OFF, active-low: 1=OFF)
+
 _blink:
-	; Read current LED/button register
-	la	r0,-65536	; r0 = 0xFF0000 LED/button I/O
-	lb	r1,0(r0)	; r1 = current register value
+	la	r0,-65536	; r0 = 0xFF0000 LED I/O
 
 	; Toggle LED D2 by XORing with 1
 	lc	r2,1		; r2 = toggle mask
 	xor	r1,r2		; r1 ^= 1 (toggle bit 0)
 
-	; Write new LED state back
+	; Write new LED state
 	sb	r1,0(r0)	; store to LED register
 
 	; Print 'L' to UART

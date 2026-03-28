@@ -375,8 +375,14 @@ impl EmulatorCore {
 
     // ===== I/O: LED and Button =====
 
+    /// Get raw LED register value (active-low: 0=ON, 1=OFF)
     pub fn get_led(&self) -> u8 {
         self.cpu.io.leds
+    }
+
+    /// Check if LED D2 is visually on (active-low: register bit 0 == 0 means ON)
+    pub fn is_led_on(&self) -> bool {
+        (self.cpu.io.leds & 1) == 0
     }
 
     pub fn get_button(&self) -> bool {
@@ -622,21 +628,22 @@ mod tests {
     #[test]
     fn test_led_change_detected() {
         let mut emu = EmulatorCore::new();
-        // la r0, 0xFF0000 (LED addr); lc r1, 1; sb r1, 0(r0)
-        // Encode manually using known bytes:
+        // la r0, 0xFF0000 (LED addr); lc r1, 0; sb r1, 0(r0)
+        // Write 0 to LED = ON (active-low)
         emu.write_byte(0, 0x29); // la r0
         emu.write_byte(1, 0x00);
         emu.write_byte(2, 0x00);
         emu.write_byte(3, 0xFF); // 0xFF0000
         emu.write_byte(4, 0x45); // lc r1
-        emu.write_byte(5, 0x01); // value 1
+        emu.write_byte(5, 0x00); // value 0 (LED ON, active-low)
         emu.write_byte(6, 0x84); // sb r1,(r0)
         emu.write_byte(7, 0x00); // offset 0
 
         emu.resume();
         let result = emu.run_batch(3);
         assert!(result.led_changed);
-        assert_eq!(emu.get_led(), 1);
+        assert_eq!(emu.get_led(), 0);
+        assert!(emu.is_led_on());
     }
 
     #[test]

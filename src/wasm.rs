@@ -190,9 +190,14 @@ impl WasmCpu {
 
     // ===== I/O Peripheral Access =====
 
-    /// Get LED state (8 bits)
+    /// Get LED register value (active-low: bit 0 = 0 means ON)
     pub fn get_leds(&self) -> u8 {
         self.emu.get_led()
+    }
+
+    /// Check if LED D2 is visually on (active-low)
+    pub fn is_led_on(&self) -> bool {
+        self.emu.is_led_on()
     }
 
     /// Get switch state (8 bits)

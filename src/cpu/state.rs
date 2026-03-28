@@ -51,7 +51,7 @@ pub const MEMORY_SIZE: usize = SRAM_SIZE;
 /// I/O peripheral state
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct IoState {
-    /// LED output state (bit 0 = LED D2, active low on hardware)
+    /// LED output register (bit 0 = LED D2 pin, active-low: 0=ON, 1=OFF)
     pub leds: u8,
     /// Switch/button input state (bit 0 = button S2, normally high, low when pressed)
     pub switches: u8,
@@ -82,7 +82,7 @@ pub struct IoState {
 impl IoState {
     pub fn new() -> Self {
         Self {
-            leds: 0,
+            leds: 1, // LED off at reset (active-low: 1=OFF)
             switches: 0x01,          // S2 normally high (low = pressed)
             uart_tx_busy_cycles: 10, // realistic: 10 instructions per character
             uart_never_ready: false,

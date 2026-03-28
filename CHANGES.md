@@ -1,5 +1,19 @@
 # Changes
 
+## 2026-03-28
+
+- **BREAKING**: LED active-low polarity matches hardware (0=ON, 1=OFF)
+  - `IoState.leds` defaults to 1 (OFF at reset, matching Verilog `led <= 1'b1`)
+  - Display code interprets bit 0 = 0 as ON
+  - `EmulatorCore::is_led_on()` helper added
+  - All assembler and Rust demos updated
+  - Button Echo uses direct copy (no XOR), matching hardware blinky.c
+- `--switch on|off` flag to set button S2 state before execution
+- Improved `--dump` I/O section: LED and switch state shown separately with labels
+- `--base-addr <addr>` for `--assemble` mode: labels resolve at specified base address
+- `assemble_at(source, base_address)` public API on Assembler
+- Fixed hello_uart.s and hello_world.s to poll UART TX busy before writes
+
 ## 2026-03-27
 
 - `--patch <addr>=<value>` flag: write 24-bit LE values to memory after loading (repeatable)

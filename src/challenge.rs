@@ -275,7 +275,8 @@ fn check_expected(name: &str, cpu: &CpuState, inject_bad: bool) -> SelfTestResul
         "Button Echo" => {
             let led = cpu.io.leds & 1;
             let expect_running = !expect_run;
-            let expect_led: u8 = if inject_bad { 0 } else { 1 };
+            // Active-low: S2 pressed=0 → write 0 → LED ON (bit 0 = 0)
+            let expect_led: u8 = if inject_bad { 1 } else { 0 };
             checks.push((
                 "running",
                 format!("{}", expect_running),

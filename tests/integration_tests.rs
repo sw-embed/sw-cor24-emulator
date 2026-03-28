@@ -20,13 +20,16 @@ fn load_and_run(lgo_path: &str, entry: u32, max_cycles: u64) -> CpuState {
 }
 
 #[test]
-fn test_led_on() {
+fn test_led_on_lgo() {
+    // The reference as24 .lgo writes 1 to LED register.
+    // On hardware this is LED OFF (active-low: 1=OFF).
+    // We preserve the .lgo as-is — it's from the reference toolchain.
     let cpu = load_and_run(
         concat!(env!("CARGO_MANIFEST_DIR"), "/tests/programs/led_on.lgo"),
         0,
         100,
     );
-    assert_eq!(cpu.io.leds, 0x01, "LED D2 should be on (bit 0 = 1)");
+    assert_eq!(cpu.io.leds, 0x01, "LED register should be 0x01 (LED OFF, active-low)");
 }
 
 #[test]

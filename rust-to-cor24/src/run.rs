@@ -128,7 +128,7 @@ fn print_long_help() {
 fn print_leds(leds: u8) {
     print!("\rLEDs: ");
     for i in (0..8).rev() {
-        if (leds >> i) & 1 == 1 { print!("\x1b[91m●\x1b[0m"); }
+        if (leds >> i) & 1 == 0 { print!("\x1b[91m●\x1b[0m"); }  // active-low: 0=ON
         else { print!("○"); }
     }
     print!("  (0x{:02X})  ", leds);
@@ -578,7 +578,7 @@ fn print_io_state(emu: &EmulatorCore) {
     let led = snap.led;
     let switch = snap.button;
     print!("  LED D2:  0x{:02X}  ", led);
-    if led & 1 == 1 { print!("ON"); } else { print!("off"); }
+    if led & 1 == 0 { print!("ON (active-low)"); } else { print!("off"); }
     println!();
     print!("  BTN S2:  0x{:02X}  ", switch);
     println!("{}", if switch & 1 == 0 { "PRESSED (active-low)" } else { "released" });

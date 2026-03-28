@@ -384,7 +384,7 @@ pub fn app() -> Html {
                     condition_flag: new_cpu.get_condition_flag(),
                     is_halted: new_cpu.is_halted(),
                     led_value: new_cpu.get_led_value(),
-                    led_duty_cycle: if (new_cpu.get_led_value() & 1) == 1 {
+                    led_duty_cycle: if (new_cpu.get_led_value() & 1) == 0 {
                         1.0
                     } else {
                         0.0
@@ -492,7 +492,7 @@ pub fn app() -> Html {
                         condition_flag: new_cpu.get_condition_flag(),
                         is_halted: new_cpu.is_halted(),
                         led_value: new_cpu.get_led_value(),
-                        led_duty_cycle: if (new_cpu.get_led_value() & 1) == 1 {
+                        led_duty_cycle: if (new_cpu.get_led_value() & 1) == 0 {
                             1.0
                         } else {
                             0.0
@@ -627,7 +627,7 @@ pub fn app() -> Html {
                     condition_flag: new_cpu.get_condition_flag(),
                     is_halted: new_cpu.is_halted(),
                     led_value: new_cpu.get_led_value(),
-                    led_duty_cycle: if (new_cpu.get_led_value() & 1) == 1 {
+                    led_duty_cycle: if (new_cpu.get_led_value() & 1) == 0 {
                         1.0
                     } else {
                         0.0
@@ -736,7 +736,7 @@ pub fn app() -> Html {
                         condition_flag: new_cpu.get_condition_flag(),
                         is_halted: new_cpu.is_halted(),
                         led_value: new_cpu.get_led_value(),
-                        led_duty_cycle: if (new_cpu.get_led_value() & 1) == 1 {
+                        led_duty_cycle: if (new_cpu.get_led_value() & 1) == 0 {
                             1.0
                         } else {
                             0.0
@@ -1699,7 +1699,7 @@ fn run_one_instruction(
             halted = true;
             break;
         }
-        if current_cpu.get_led_value() & 1 == 1 {
+        if current_cpu.get_led_value() & 1 == 0 {
             batch_led_on += 1;
         }
     }
@@ -1962,9 +1962,9 @@ fn capture_cpu_state(cpu: &WasmCpu, prev: &EmulatorState) -> EmulatorState {
         condition_flag: cpu.get_condition_flag(),
         is_halted: cpu.is_halted(),
         led_value: cpu.get_led_value(),
-        led_on_count: prev.led_on_count + if (cpu.get_led_value() & 1) == 1 { 1 } else { 0 },
+        led_on_count: prev.led_on_count + if (cpu.get_led_value() & 1) == 0 { 1 } else { 0 },
         led_duty_cycle: {
-            let on = prev.led_on_count + if (cpu.get_led_value() & 1) == 1 { 1 } else { 0 };
+            let on = prev.led_on_count + if (cpu.get_led_value() & 1) == 0 { 1 } else { 0 };
             let total = cpu.get_instruction_count() as u64;
             if total > 0 {
                 on as f32 / total as f32

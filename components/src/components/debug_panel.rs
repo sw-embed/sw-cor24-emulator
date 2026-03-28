@@ -119,7 +119,7 @@ pub fn debug_panel(props: &DebugPanelProps) -> Html {
     };
 
     // LED display: show current state, duty cycle in tooltip
-    let led_is_on = (state.led_value & 1) == 1;
+    let led_is_on = (state.led_value & 1) == 0; // active-low: 0=ON
     let duty = state.led_duty_cycle;
     let led_class = if led_is_on {
         "led led-on led-large"

@@ -48,6 +48,8 @@ forms (1, 2, or 4 bytes).
   - r7 = ir (interrupt return address)
 - **Single Condition Flag**: C (set by compare instructions)
 - **16 MB Address Space**: 1 MB SRAM + 3 KB EBR (stack) + memory-mapped I/O
+- **Active-Low LED**: Write 0 to FF0000 bit 0 = LED ON, write 1 = LED OFF (matches hardware)
+- **Active-Low Switch**: Read FF0000 bit 0: 0 = pressed, 1 = released
 - **Variable-Length Instructions**: 1, 2, or 4 bytes
 
 ### Supported Instructions
