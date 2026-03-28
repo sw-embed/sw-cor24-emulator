@@ -40,6 +40,15 @@ cor24-run --run fibonacci.s --step
 
 # Run a demo with animated speed
 cor24-run --demo --speed 100000 --time 10
+
+# Load a guest binary into memory after assembly
+cor24-run --run pvm.s --load-binary hello.p24@0x010000 --terminal
+
+# Multiple binaries at different addresses
+cor24-run --run loader.s --load-binary code.bin@0x010000 --load-binary data.bin@0x020000
+
+# Interactive terminal mode (stdin/stdout bridged to UART)
+cor24-run --run repl.s --terminal --echo --speed 0
 ```
 
 ### Options
@@ -56,6 +65,30 @@ cor24-run --demo --speed 100000 --time 10
 | `--uart-input <str>` | Send characters to UART RX (supports \n, \x21) |
 | `--uart-never-ready` | UART TX stays busy forever (test that programs poll before writing) |
 | `--entry <label>` | Set entry point to label address |
+| `--load-binary <file>@<addr>` | Load raw bytes into memory at address (after assembly) |
+| `--terminal` | Bridge stdin/stdout to UART (interactive mode) |
+| `--echo` | Local echo in terminal mode |
+| `--stack-kilobytes <3\|8>` | EBR stack size (default: 3, max: 8) |
+| `-h` | Short help |
+| `--help` | Extended help with AI agent guidance |
+| `-V, --version` | Version, copyright, license, build info |
+
+### Loading guest binaries
+
+The `--load-binary <file>@<addr>` flag loads raw bytes from a file into
+emulator memory at a specified address. Loading happens after the host
+`.s` program is assembled but before execution begins. This is useful
+for VMs (p-code, Forth, Lisp) that need guest programs pre-loaded in memory.
+
+Address formats: `0x010000` (hex prefix), `010000h` (hex suffix), `65536` (decimal).
+
+The flag is repeatable — use multiple `--load-binary` flags to load
+code and data segments at different addresses.
+
+```bash
+# P-code VM pipeline: assemble pvm.s, load guest .p24, run with UART I/O
+cor24-run --run pvm.s --load-binary hello.p24@0x010000 --terminal --speed 0 -n 50000000
+```
 
 ## cor24-dbg — Interactive debugger
 

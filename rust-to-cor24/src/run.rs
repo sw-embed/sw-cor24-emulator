@@ -43,6 +43,7 @@ fn print_short_help() {
     println!("Usage:");
     println!("  cor24-run --demo [options]        Run built-in LED demo");
     println!("  cor24-run --run <file.s> [opts]   Assemble and run");
+    println!("  cor24-run --load-binary <f>@<a> --entry <a>  Run pre-assembled binaries");
     println!("  cor24-run --assemble <in.s> <out.bin> <out.lst>");
     println!();
     println!("Options:");
@@ -53,13 +54,14 @@ fn print_short_help() {
     println!("  --time, -t <secs>      Time limit in seconds (default: {})", DEFAULT_TIME_LIMIT);
     println!("  --max-instructions, -n <count>  Stop after N instructions (-1 = no limit)");
     println!("  --uart-input, -u <str> Send characters to UART RX (supports \\n, \\x21)");
-    println!("  --entry, -e <label>    Set entry point to label address");
+    println!("  --entry, -e <label|addr> Set entry point (label name or numeric address)");
     println!("  --dump                 Dump CPU state, I/O, and non-zero memory after halt");
     println!("  --trace <N>            Dump last N instructions on halt/timeout (default: 50)");
     println!("  --step                 Print each instruction as it executes");
     println!("  --terminal             Bridge stdin/stdout to UART (interactive mode)");
     println!("  --echo                 Local echo in terminal mode (for programs that don't echo)");
     println!("  --load-binary <file>@<addr>  Load raw bytes into memory at address");
+    println!("  --patch <addr>=<value> Write 24-bit value to memory (repeatable)");
     println!("  --stack-kilobytes <3|8>  EBR stack size (default: 3, max: 8)");
     println!("  --uart-never-ready     UART TX stays busy forever (test polling)");
     println!();
@@ -69,6 +71,8 @@ fn print_short_help() {
     println!("  cor24-run --run echo.s -u 'abc!' --speed 0 --dump");
     println!("  cor24-run --run repl.s --terminal --echo --speed 0");
     println!("  cor24-run --run pvm.s --load-binary hello.p24@0x010000 --terminal");
+    println!("  cor24-run --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 --entry 0 --terminal");
+    println!("  cor24-run --load-binary pvm.bin@0 --patch 0x09D7=0x010000 --entry 0 --terminal");
 }
 
 fn print_long_help() {
@@ -107,6 +111,16 @@ fn print_long_help() {
     println!("  Programs that need deep recursion should use --stack-kilobytes 8.");
     println!("  Use --load-binary <file>@<addr> to load guest binaries (p24, forth, etc)");
     println!("  into memory after the host program is assembled. Repeatable for multiple files.");
+    println!("  Files with .p24 magic header (P24\\0) are auto-detected: the 18-byte header");
+    println!("  is stripped and only the code+data body is loaded.");
+    println!();
+    println!("  Use --patch <addr>=<value> to write 24-bit values to memory after loading.");
+    println!("  Useful for setting VM state (e.g., guest_code_base). Repeatable.");
+    println!();
+    println!("  Binary-only mode: use --load-binary + --entry <addr> without --run to skip");
+    println!("  assembly entirely. Load pre-assembled COR24 binaries for instant startup:");
+    println!("    cor24-run --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 \\");
+    println!("              --patch 0x09D7=0x010000 --entry 0 --terminal");
 }
 
 fn print_leds(leds: u8) {
@@ -274,6 +288,18 @@ struct CliArgs {
     echo: bool,                      // echo stdin to stdout in terminal mode
     stack_kb: u32,                   // stack size in KB (3 or 8)
     load_binaries: Vec<(String, u32)>, // (file_path, load_address) pairs
+    patches: Vec<(u32, u32)>,           // (address, 24-bit value) pairs
+}
+
+/// Parse a numeric address string: 0x prefix, h suffix, or decimal.
+fn parse_numeric_addr(s: &str) -> Option<u32> {
+    if s.starts_with("0x") || s.starts_with("0X") {
+        u32::from_str_radix(&s[2..], 16).ok()
+    } else if s.ends_with('h') || s.ends_with('H') {
+        u32::from_str_radix(&s[..s.len()-1], 16).ok()
+    } else {
+        s.parse::<u32>().ok()
+    }
 }
 
 fn parse_args() -> CliArgs {
@@ -294,6 +320,7 @@ fn parse_args() -> CliArgs {
         echo: false,
         stack_kb: 3,
         load_binaries: Vec::new(),
+        patches: Vec::new(),
     };
 
     let mut i = 1;
@@ -404,17 +431,9 @@ fn parse_args() -> CliArgs {
                     let spec = &args[i + 1];
                     match spec.rsplit_once('@') {
                         Some((file, addr_str)) => {
-                            let addr_str = addr_str.trim();
-                            let addr = if addr_str.starts_with("0x") || addr_str.starts_with("0X") {
-                                u32::from_str_radix(&addr_str[2..], 16)
-                            } else if addr_str.ends_with('h') || addr_str.ends_with('H') {
-                                u32::from_str_radix(&addr_str[..addr_str.len()-1], 16)
-                            } else {
-                                addr_str.parse::<u32>()
-                            };
-                            match addr {
-                                Ok(a) => cli.load_binaries.push((file.to_string(), a)),
-                                Err(_) => {
+                            match parse_numeric_addr(addr_str.trim()) {
+                                Some(a) => cli.load_binaries.push((file.to_string(), a)),
+                                None => {
                                     eprintln!("Error: invalid address in --load-binary '{}' (expected <file>@<addr>)", spec);
                                     std::process::exit(1);
                                 }
@@ -422,6 +441,29 @@ fn parse_args() -> CliArgs {
                         }
                         None => {
                             eprintln!("Error: --load-binary requires <file>@<addr> format (e.g., hello.p24@0x010000)");
+                            std::process::exit(1);
+                        }
+                    }
+                    i += 1;
+                }
+            }
+            "--patch" => {
+                if i + 1 < args.len() {
+                    let spec = &args[i + 1];
+                    match spec.split_once('=') {
+                        Some((addr_str, val_str)) => {
+                            let addr = parse_numeric_addr(addr_str.trim());
+                            let val = parse_numeric_addr(val_str.trim());
+                            match (addr, val) {
+                                (Some(a), Some(v)) => cli.patches.push((a, v)),
+                                _ => {
+                                    eprintln!("Error: invalid --patch '{}' (expected <addr>=<value>, e.g., 0x09D7=0x010000)", spec);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                        None => {
+                            eprintln!("Error: --patch requires <addr>=<value> format (e.g., 0x09D7=0x010000)");
                             std::process::exit(1);
                         }
                     }
@@ -848,6 +890,46 @@ fn run_terminal_mode(emu: &mut EmulatorCore, speed: u64, time_limit: f64, max_in
     total_instructions
 }
 
+/// .p24 magic bytes: "P24\0"
+const P24_MAGIC: [u8; 4] = [0x50, 0x32, 0x34, 0x00];
+const P24_HEADER_SIZE: usize = 18;
+
+/// Load binary files and apply memory patches.
+/// Auto-detects .p24 files by magic header and strips the 18-byte header.
+fn load_binaries_and_patches(emu: &mut EmulatorCore, binaries: &[(String, u32)], patches: &[(u32, u32)]) {
+    for (file_path, addr) in binaries {
+        let data = fs::read(file_path).unwrap_or_else(|e| {
+            eprintln!("Error: cannot read binary file '{}': {}", file_path, e);
+            std::process::exit(1);
+        });
+
+        // Auto-detect .p24 header and strip it
+        let (body, stripped) = if data.len() >= P24_HEADER_SIZE && data[..4] == P24_MAGIC {
+            (&data[P24_HEADER_SIZE..], true)
+        } else {
+            (data.as_slice(), false)
+        };
+
+        for (i, &b) in body.iter().enumerate() {
+            emu.write_byte(addr + i as u32, b);
+        }
+        if stripped {
+            println!("Loaded {} bytes from '{}' at 0x{:06X} (stripped {} byte .p24 header)",
+                     body.len(), file_path, addr, P24_HEADER_SIZE);
+        } else {
+            println!("Loaded {} bytes from '{}' at 0x{:06X}", body.len(), file_path, addr);
+        }
+    }
+
+    // Apply memory patches (24-bit LE values)
+    for &(addr, value) in patches {
+        emu.write_byte(addr, (value & 0xFF) as u8);
+        emu.write_byte(addr + 1, ((value >> 8) & 0xFF) as u8);
+        emu.write_byte(addr + 2, ((value >> 16) & 0xFF) as u8);
+        println!("Patched 0x{:06X} = 0x{:06X}", addr, value);
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -865,7 +947,12 @@ fn main() {
         return;
     }
 
-    let cli = parse_args();
+    let mut cli = parse_args();
+
+    // Binary-only mode: --load-binary without --run
+    if cli.command.is_empty() && !cli.load_binaries.is_empty() {
+        cli.command = "binary".to_string();
+    }
 
     match cli.command.as_str() {
         "demo" => {
@@ -933,32 +1020,28 @@ fn main() {
             }
             load_assembled(&mut emu, &result);
 
-            // Load binary files into memory at specified addresses
-            for (file_path, addr) in &cli.load_binaries {
-                let data = fs::read(file_path).unwrap_or_else(|e| {
-                    eprintln!("Error: cannot read binary file '{}': {}", file_path, e);
-                    std::process::exit(1);
-                });
-                for (i, &b) in data.iter().enumerate() {
-                    emu.write_byte(addr + i as u32, b);
-                }
-                println!("Loaded {} bytes from '{}' at 0x{:06X}", data.len(), file_path, addr);
-            }
+            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches);
 
-            if let Some(entry_label) = &cli.entry {
-                // Find label address in assembly result
-                let mut found = false;
-                for line in &result.lines {
-                    let src = line.source.trim();
-                    if src.ends_with(':') && src.trim_end_matches(':') == entry_label.as_str() {
-                        emu.set_pc(line.address);
-                        println!("Entry point: {} @ 0x{:06X}", entry_label, line.address);
-                        found = true;
-                        break;
+            if let Some(entry_str) = &cli.entry {
+                // Try numeric address first, then label lookup
+                if let Some(addr) = parse_numeric_addr(entry_str) {
+                    emu.set_pc(addr);
+                    println!("Entry point: 0x{:06X}", addr);
+                } else {
+                    // Find label address in assembly result
+                    let mut found = false;
+                    for line in &result.lines {
+                        let src = line.source.trim();
+                        if src.ends_with(':') && src.trim_end_matches(':') == entry_str.as_str() {
+                            emu.set_pc(line.address);
+                            println!("Entry point: {} @ 0x{:06X}", entry_str, line.address);
+                            found = true;
+                            break;
+                        }
                     }
-                }
-                if !found {
-                    eprintln!("Warning: entry point '{}' not found, starting at 0x000000", entry_label);
+                    if !found {
+                        eprintln!("Warning: entry point '{}' not found, starting at 0x000000", entry_str);
+                    }
                 }
             }
 
@@ -1049,8 +1132,231 @@ fn main() {
             println!("Wrote listing to {}", args[4]);
         }
 
-        _ => {
-            eprintln!("Unknown command. Use --demo, --run, or --assemble");
+        "binary" => {
+            // Binary-only mode: load pre-assembled binaries, no assembly step
+            let mut emu = EmulatorCore::new();
+            if cli.uart_never_ready {
+                emu.set_uart_never_ready(true);
+            }
+            if cli.stack_kb == 8 {
+                emu.set_reg(4, 0xFF0000);
+            }
+
+            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches);
+
+            // --entry is required in binary mode and must be numeric
+            if let Some(entry_str) = &cli.entry {
+                match parse_numeric_addr(entry_str) {
+                    Some(addr) => {
+                        emu.set_pc(addr);
+                        println!("Entry point: 0x{:06X}", addr);
+                    }
+                    None => {
+                        eprintln!("Error: --entry must be a numeric address in binary mode (e.g., 0x000000)");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Default to 0 if not specified
+                println!("Entry point: 0x000000 (default)");
+            }
+
+            if cli.echo && !cli.terminal {
+                eprintln!("Error: --echo requires --terminal");
+                return;
+            }
+
+            if cli.terminal {
+                if !cli.uart_input.is_empty() {
+                    eprintln!("Error: --terminal and --uart-input are incompatible");
+                    return;
+                }
+                if cli.step {
+                    eprintln!("Error: --terminal and --step are incompatible");
+                    return;
+                }
+
+                let speed = if cli.speed == DEFAULT_SPEED { 0 } else { cli.speed };
+                let time_limit = if cli.time_limit == DEFAULT_TIME_LIMIT { 0.0 } else { cli.time_limit };
+
+                let instructions = run_terminal_mode(&mut emu, speed, time_limit, cli.max_instructions, cli.echo);
+
+                eprintln!("Executed {} instructions", instructions);
+                if cli.trace > 0 {
+                    print!("{}", emu.trace().format_last(cli.trace));
+                }
+                if cli.dump { print_dump(&emu); }
+                return;
+            }
+
+            println!("Running (speed: {} IPS, time limit: {}s)...\n",
+                     if cli.speed == 0 { "max".to_string() } else { cli.speed.to_string() },
+                     cli.time_limit);
+
+            if cli.step {
+                run_step_mode(&mut emu, cli.max_instructions, &cli.uart_input);
+            } else {
+                let instructions = run_with_timing(&mut emu, cli.speed, cli.time_limit, cli.max_instructions, &cli.uart_input);
+
+                let uart = emu.get_uart_output();
+                if !uart.is_empty() {
+                    println!("\nUART output: {}", uart);
+                }
+
+                println!("\nExecuted {} instructions", instructions);
+                if emu.is_halted() {
+                    println!("CPU halted (self-branch detected)");
+                }
+            }
+            if cli.trace > 0 {
+                print!("{}", emu.trace().format_last(cli.trace));
+            }
+            if cli.dump { print_dump(&emu); }
         }
+
+        _ => {
+            eprintln!("Unknown command. Use --demo, --run, --load-binary, or --assemble");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- parse_numeric_addr ---
+
+    #[test]
+    fn test_parse_hex_prefix() {
+        assert_eq!(parse_numeric_addr("0x010000"), Some(0x010000));
+        assert_eq!(parse_numeric_addr("0X0"), Some(0));
+        assert_eq!(parse_numeric_addr("0xFF"), Some(0xFF));
+    }
+
+    #[test]
+    fn test_parse_hex_suffix() {
+        assert_eq!(parse_numeric_addr("010000h"), Some(0x010000));
+        assert_eq!(parse_numeric_addr("FFH"), Some(0xFF));
+    }
+
+    #[test]
+    fn test_parse_decimal() {
+        assert_eq!(parse_numeric_addr("0"), Some(0));
+        assert_eq!(parse_numeric_addr("65536"), Some(65536));
+    }
+
+    #[test]
+    fn test_parse_invalid() {
+        assert_eq!(parse_numeric_addr("xyz"), None);
+        assert_eq!(parse_numeric_addr(""), None);
+    }
+
+    // --- .p24 header detection ---
+
+    #[test]
+    fn test_p24_magic_detection() {
+        // Valid .p24: magic + 14 header bytes + 5 body bytes
+        let mut data = vec![0x50, 0x32, 0x34, 0x00]; // "P24\0"
+        data.extend_from_slice(&[0; 14]); // rest of header
+        data.extend_from_slice(b"HELLO");
+        assert_eq!(data.len(), 23);
+        assert!(data.len() >= P24_HEADER_SIZE && data[..4] == P24_MAGIC);
+        let body = &data[P24_HEADER_SIZE..];
+        assert_eq!(body, b"HELLO");
+    }
+
+    #[test]
+    fn test_raw_binary_no_strip() {
+        let data = vec![0x44, 0x05, 0x5A]; // lc r0,5; mov r1,r0
+        assert!(!(data.len() >= P24_HEADER_SIZE && data[..4] == P24_MAGIC));
+    }
+
+    // --- load_binaries_and_patches ---
+
+    #[test]
+    fn test_patch_writes_24bit_le() {
+        let mut emu = EmulatorCore::new();
+        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0x010000)]);
+        assert_eq!(emu.read_byte(0x100), 0x00);
+        assert_eq!(emu.read_byte(0x101), 0x00);
+        assert_eq!(emu.read_byte(0x102), 0x01);
+    }
+
+    #[test]
+    fn test_patch_multiple() {
+        let mut emu = EmulatorCore::new();
+        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0xABCDEF), (0x200, 0x42)]);
+        assert_eq!(emu.read_byte(0x100), 0xEF);
+        assert_eq!(emu.read_byte(0x101), 0xCD);
+        assert_eq!(emu.read_byte(0x102), 0xAB);
+        assert_eq!(emu.read_byte(0x200), 0x42);
+        assert_eq!(emu.read_byte(0x201), 0x00);
+        assert_eq!(emu.read_byte(0x202), 0x00);
+    }
+
+    #[test]
+    fn test_load_raw_binary_file() {
+        let tmp = std::env::temp_dir().join("cor24_test_raw.bin");
+        fs::write(&tmp, &[0x44, 0x05, 0x5A]).unwrap();
+        let mut emu = EmulatorCore::new();
+        load_binaries_and_patches(
+            &mut emu,
+            &[(tmp.to_string_lossy().to_string(), 0x1000)],
+            &[],
+        );
+        assert_eq!(emu.read_byte(0x1000), 0x44);
+        assert_eq!(emu.read_byte(0x1001), 0x05);
+        assert_eq!(emu.read_byte(0x1002), 0x5A);
+        fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn test_load_p24_strips_header() {
+        let tmp = std::env::temp_dir().join("cor24_test.p24");
+        let mut data = vec![0x50, 0x32, 0x34, 0x00]; // P24 magic (4 bytes)
+        data.extend_from_slice(&[0x01]);               // version (1 byte)
+        data.extend_from_slice(&[0x00, 0x00, 0x00]);   // entry_point (3 bytes)
+        data.extend_from_slice(&[0x03, 0x00, 0x00]);   // code_size (3 bytes)
+        data.extend_from_slice(&[0x00, 0x00, 0x00]);   // data_size (3 bytes)
+        data.extend_from_slice(&[0x00, 0x00, 0x00]);   // global_count (3 bytes)
+        data.push(0x00);                                // reserved (1 byte)
+        data.extend_from_slice(&[0xAA, 0xBB, 0xCC]);   // body (3 bytes)
+        assert_eq!(data.len(), P24_HEADER_SIZE + 3);    // 18 + 3 = 21
+        fs::write(&tmp, &data).unwrap();
+
+        let mut emu = EmulatorCore::new();
+        load_binaries_and_patches(
+            &mut emu,
+            &[(tmp.to_string_lossy().to_string(), 0x010000)],
+            &[],
+        );
+        // Should load body only, not header
+        assert_eq!(emu.read_byte(0x010000), 0xAA);
+        assert_eq!(emu.read_byte(0x010001), 0xBB);
+        assert_eq!(emu.read_byte(0x010002), 0xCC);
+        fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn test_binary_mode_runs_program() {
+        // Assemble a tiny program: lc r0,42; halt (self-branch)
+        let mut asm = Assembler::new();
+        let result = asm.assemble("lc r0, 42\nhalt:\n bra halt");
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        let bytes: Vec<u8> = result.lines.iter()
+            .flat_map(|l| l.bytes.iter().copied())
+            .collect();
+
+        // Load as raw binary and run
+        let mut emu = EmulatorCore::new();
+        for (i, &b) in bytes.iter().enumerate() {
+            emu.write_byte(i as u32, b);
+        }
+        emu.set_pc(0);
+        emu.resume();
+        emu.run_batch(100);
+        let snap = emu.snapshot();
+        assert_eq!(snap.regs[0], 42);
+        assert!(snap.halted);
     }
 }

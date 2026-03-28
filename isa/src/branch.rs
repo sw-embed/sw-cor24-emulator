@@ -32,10 +32,5 @@ pub const MAX_SHORT_BRANCH_INSTRUCTIONS: usize = 31;
 /// Uses a conservative estimate: each instruction is at most 4 bytes.
 /// Returns true if the distance is guaranteed to be within range.
 pub fn can_short_branch(from_count: usize, to_count: usize) -> bool {
-    let distance = if from_count > to_count {
-        from_count - to_count
-    } else {
-        to_count - from_count
-    };
-    distance <= MAX_SHORT_BRANCH_INSTRUCTIONS
+    from_count.abs_diff(to_count) <= MAX_SHORT_BRANCH_INSTRUCTIONS
 }

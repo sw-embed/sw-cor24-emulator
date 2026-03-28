@@ -1,5 +1,26 @@
 # Changes
 
+## 2026-03-27
+
+- `--patch <addr>=<value>` flag: write 24-bit LE values to memory after loading (repeatable)
+- Binary-only mode: `--load-binary` + `--entry <addr>` without `--run` skips assembly
+- `.p24` auto-detection: `--load-binary` strips 18-byte header when P24 magic detected
+- `--entry` accepts numeric addresses (0x prefix, h suffix, decimal) in addition to labels
+- 11 new unit tests for address parsing, patching, .p24 detection, binary loading
+- Fix clippy `abs_diff` warning in isa/src/branch.rs
+- Update docs/cli-tools.md with new flags, examples, and guest binary loading section
+- Update [[COR24RS]] wiki page with recent changes and API docs
+
+## 2026-03-24
+
+- `--load-binary <file>@<addr>` flag for loading guest binaries into emulator memory
+- `.word` directive supports label references (forward and backward)
+- UART TX busy simulation disabled in WASM mode (prevents browser freeze)
+- `-h` (short help), `--help` (extended help), `-V`/`--version` flags for cor24-run
+- `--terminal` mode bridging stdin/stdout to UART
+- `--echo` flag for local echo in terminal mode
+- `--stack-kilobytes <3|8>` for configurable EBR stack size
+
 ## 2026-03-21
 
 - Realistic UART TX busy: 10 instruction cycles per character (was 1)
