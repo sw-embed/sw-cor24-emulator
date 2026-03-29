@@ -130,8 +130,8 @@ impl Assembler {
     fn assemble_line(&mut self, line: &str, line_num: usize) {
         let line = line.trim();
 
-        // Skip empty lines and comments
-        if line.is_empty() || line.starts_with(';') {
+        // Skip empty lines and comments (; or # at start of line)
+        if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
             return;
         }
 
@@ -308,8 +308,6 @@ impl Assembler {
         // Strip trailing comments
         let inst = if let Some(pos) = inst.find(';') {
             &inst[..pos]
-        } else if let Some(pos) = inst.find('#') {
-            &inst[..pos]
         } else {
             inst
         };
@@ -421,6 +419,12 @@ impl Assembler {
         {
             // Intel-style hex: 0FFh, 2Ah (must start with digit)
             u32::from_str_radix(&s[..s.len() - 1], 16).ok()
+        } else if let Some(hex) = s.strip_prefix("#x").or_else(|| s.strip_prefix("#X")) {
+            // as24-style hex: #xFF0000, #x2A
+            u32::from_str_radix(hex, 16).ok()
+        } else if s.starts_with("0x") || s.starts_with("0X") {
+            // C-style hex: 0xFF0000
+            u32::from_str_radix(&s[2..], 16).ok()
         } else if s.starts_with('-') {
             s.parse::<i32>().ok().map(|v| v as u32)
         } else {
@@ -1142,7 +1146,7 @@ mod tests {
     #[test]
     fn test_trailing_comments() {
         let mut asm = Assembler::new();
-        let result = asm.assemble("lc r0,10       ; load constant\nadd r0,r1  # add");
+        let result = asm.assemble("lc r0,10       ; load constant\nadd r0,r1  ; add");
         assert!(result.errors.is_empty(), "Errors: {:?}", result.errors);
         assert_eq!(result.bytes, vec![0x44, 10, 0x01]);
     }
@@ -1406,6 +1410,38 @@ halt:
                 result.errors
             );
         }
+    }
+
+    // --- hex literal format tests ---
+
+    #[test]
+    fn test_as24_hex_prefix() {
+        // as24-style #x prefix
+        let mut asm = Assembler::new();
+        let result = asm.assemble("la r0, #xFF0000");
+        assert!(result.errors.is_empty(), "Errors: {:?}", result.errors);
+        // la r0 = 0x29, then 3 bytes LE: 0x00, 0x00, 0xFF
+        assert_eq!(result.bytes, vec![0x29, 0x00, 0x00, 0xFF]);
+    }
+
+    #[test]
+    fn test_c_style_hex_prefix() {
+        let mut asm = Assembler::new();
+        let result = asm.assemble("la r0, 0xFF0100");
+        assert!(result.errors.is_empty(), "Errors: {:?}", result.errors);
+        assert_eq!(result.bytes, vec![0x29, 0x00, 0x01, 0xFF]);
+    }
+
+    #[test]
+    fn test_all_hex_formats_equivalent() {
+        let mut a1 = Assembler::new();
+        let mut a2 = Assembler::new();
+        let mut a3 = Assembler::new();
+        let r1 = a1.assemble("la r0, #x2A");
+        let r2 = a2.assemble("la r0, 02Ah");
+        let r3 = a3.assemble("la r0, 0x2A");
+        assert_eq!(r1.bytes, r2.bytes);
+        assert_eq!(r2.bytes, r3.bytes);
     }
 
     // --- assemble_at (base address) tests ---
