@@ -29,7 +29,10 @@ fn test_led_on_lgo() {
         0,
         100,
     );
-    assert_eq!(cpu.io.leds, 0x01, "LED register should be 0x01 (LED OFF, active-low)");
+    assert_eq!(
+        cpu.io.leds, 0x01,
+        "LED register should be 0x01 (LED OFF, active-low)"
+    );
 }
 
 #[test]

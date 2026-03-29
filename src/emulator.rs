@@ -390,6 +390,10 @@ impl EmulatorCore {
         self.cpu.io.switches & 1 == 0
     }
 
+    pub fn get_button(&self) -> bool {
+        self.is_button_pressed()
+    }
+
     pub fn set_button_pressed(&mut self, pressed: bool) {
         if pressed {
             self.cpu.io.switches &= !1; // low = pressed
@@ -789,70 +793,6 @@ mod tests {
         // '!' halts
         emu.send_uart_byte(b'!');
         run_tick(&mut emu, 500);
-        assert!(emu.is_halted(), "Should halt on '!'");
-    }
-
-    /// Test echo via the Rust pipeline COR24 output (Rust logic + asm!() interrupt plumbing)
-    #[test]
-    fn test_echo_rust_pipeline() {
-        use crate::assembler::Assembler;
-
-        let source = include_str!("examples/rust_pipeline/demo_echo.cor24.s");
-        let mut asm = Assembler::new();
-        let result = asm.assemble(source);
-        assert!(
-            result.errors.is_empty(),
-            "Assembly errors: {:?}",
-            result.errors
-        );
-
-        let mut emu = EmulatorCore::new();
-        for (addr, &byte) in result.bytes.iter().enumerate() {
-            emu.write_byte(addr as u32, byte);
-        }
-        emu.set_pc(0);
-
-        fn run_tick(emu: &mut EmulatorCore, steps: u32) {
-            for _ in 0..steps {
-                if emu.is_halted() {
-                    break;
-                }
-                let r = emu.step();
-                if matches!(
-                    r.reason,
-                    StopReason::Halted | StopReason::InvalidInstruction(_)
-                ) {
-                    break;
-                }
-            }
-        }
-
-        // Init — prompt
-        run_tick(&mut emu, 1000);
-        assert_eq!(emu.get_uart_output(), "?", "Prompt should appear");
-
-        // Send 'a', 'b', 'c' → expect 'A', 'B', 'C'
-        // v2 uses Rust logic (to_upper, handle_rx) so needs more cycles per character
-        emu.send_uart_byte(b'a');
-        run_tick(&mut emu, 10_000);
-        assert_eq!(emu.get_uart_output(), "?A", "'a' -> 'A'");
-
-        emu.send_uart_byte(b'b');
-        run_tick(&mut emu, 10_000);
-        assert_eq!(emu.get_uart_output(), "?AB", "'b' -> 'B'");
-
-        emu.send_uart_byte(b'c');
-        run_tick(&mut emu, 10_000);
-        assert_eq!(emu.get_uart_output(), "?ABC", "'c' -> 'C'");
-
-        // Send '3' → echoed as-is (non-letter)
-        emu.send_uart_byte(b'3');
-        run_tick(&mut emu, 10_000);
-        assert_eq!(emu.get_uart_output(), "?ABC3", "'3' -> '3'");
-
-        // Send '!' → sets halt flag, main loop detects and halts
-        emu.send_uart_byte(b'!');
-        run_tick(&mut emu, 10_000);
         assert!(emu.is_halted(), "Should halt on '!'");
     }
 }

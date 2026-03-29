@@ -1,17 +1,0 @@
-Assembled 345 bytes
-Entry point: demo_button_echo @ 0x00005D
-Running (speed: max IPS, time limit: 1s)...
-
-LEDs: ○○○○○○○[91m●[0m  (0x01)  
-Executed 12670000 instructions
-
-=== CPU State ===
-  PC:  0x00005D    C: 0
-  r0:  0xFF0000  (16711680)
-  r1:  0x000001  (       1)
-  r2:  0x00007D  (     125)
-  fp:  0x000000
-  sp:  0xFEEC00
-  LED: 0x01
-  Cycles: 12670000  Instructions: 12670000
-  Halted: false

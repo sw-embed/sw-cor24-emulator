@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "components", "cli", "isa"]
+members = [".", "cli", "isa"]
 resolver = "2"
 
 [package]
@@ -11,24 +11,12 @@ license = "MIT"
 description = "COR24 C-Oriented RISC 24-bit Assembly Emulator"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
-
-[features]
-default = ["standalone"]
-standalone = []
+crate-type = ["rlib"]
 
 [dependencies]
 cor24-isa = { path = "./isa", features = ["serde"] }
-components = { path = "./components" }
-yew = { version = "0.21", features = ["csr"] }
-wasm-bindgen = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde-wasm-bindgen = "0.6"
-web-sys = { version = "0.3", features = ["console"] }
-gloo = "0.11"
-getrandom = { version = "0.2", features = ["js"] }
-console_error_panic_hook = "0.1"
 thiserror = "2.0"
 
 [profile.release]

@@ -82,7 +82,7 @@ pub struct IoState {
 impl IoState {
     pub fn new() -> Self {
         Self {
-            leds: 1, // LED off at reset (active-low: 1=OFF)
+            leds: 1,                 // LED off at reset (active-low: 1=OFF)
             switches: 0x01,          // S2 normally high (low = pressed)
             uart_tx_busy_cycles: 10, // realistic: 10 instructions per character
             uart_never_ready: false,

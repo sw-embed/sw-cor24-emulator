@@ -308,8 +308,7 @@ impl Debugger {
     }
 
     fn cmd_examine(&self, arg: &str) {
-        let (count, addr_str) = if arg.starts_with('/') {
-            let rest = &arg[1..];
+        let (count, addr_str) = if let Some(rest) = arg.strip_prefix('/') {
             if let Some(space) = rest.find(' ') {
                 let n: usize = rest[..space].parse().unwrap_or(16);
                 (n, rest[space..].trim())

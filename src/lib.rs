@@ -1,6 +1,6 @@
 //! COR24 Assembly Emulator - Educational Programming Tool
 //!
-//! A browser-based emulator that teaches COR24 assembly programming through
+//! A COR24 emulator that teaches COR24 assembly programming through
 //! interactive examples and challenges.
 //!
 //! COR24 is a C-Oriented RISC 24-bit architecture with:
@@ -16,18 +16,6 @@ pub mod challenge;
 pub mod cpu;
 pub mod emulator;
 pub mod loader;
-
-// Yew app (only for standalone wasm32 builds)
-#[cfg(all(target_arch = "wasm32", feature = "standalone"))]
-pub mod app;
-#[cfg(all(target_arch = "wasm32", feature = "standalone"))]
-pub mod c_examples;
-#[cfg(all(target_arch = "wasm32", feature = "standalone"))]
-pub mod rust_examples;
-
-// WASM bindings (only for standalone wasm32 builds)
-#[cfg(all(target_arch = "wasm32", feature = "standalone"))]
-pub mod wasm;
 
 // Re-export main types for convenience
 pub use assembler::{AssembledLine, Assembler, AssemblyResult};

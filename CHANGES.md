@@ -1,5 +1,23 @@
 # Changes
 
+## 2026-03-29
+
+- **BREAKING**: Trim repository to emulator scope for COR24 ecosystem refactoring
+  - Removed web UI: `src/app.rs`, `src/wasm.rs`, `src/c_examples.rs`, `src/rust_examples.rs`
+  - Removed `components/` workspace member (Yew UI components)
+  - Removed `styles/`, `pages/`, `index.html`, `Trunk.toml` (web app assets)
+  - Removed `rust-to-cor24/` (now in `sw-cor24-rust` repo)
+  - Removed `src/examples/c_pipeline/` and `src/examples/rust_pipeline/`
+  - Removed `.playwright-cli/`, `build.sh`, `serve.sh`, `favicon.ico`
+  - Stripped web dependencies: yew, wasm-bindgen, web-sys, gloo, getrandom, console_error_panic_hook, serde-wasm-bindgen
+  - Changed crate-type from `["cdylib", "rlib"]` to `["rlib"]`
+  - Removed `standalone` feature flag
+  - Kept: `isa/`, `src/cpu/`, `src/emulator.rs`, `src/assembler.rs`, `src/challenge.rs`, `src/loader.rs`, `cli/`, `build.rs`
+  - Added `EmulatorCore::get_button()` convenience method (alias for `is_button_pressed()`)
+  - Added `scripts/build.sh` for standardized build+test
+  - Fixed clippy `manual_strip` warning in CLI examine command
+  - All 215 tests pass (191 unit + 21 integration + 3 ISA)
+
 ## 2026-03-28
 
 - **BREAKING**: LED active-low polarity matches hardware (0=ON, 1=OFF)
