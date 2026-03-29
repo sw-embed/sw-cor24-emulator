@@ -202,7 +202,7 @@ impl WasmCpu {
 
     /// Get switch state (8 bits)
     pub fn get_switches(&self) -> u8 {
-        if self.emu.get_button() { 0xFE } else { 0xFF }
+        if self.emu.is_button_pressed() { 0xFE } else { 0xFF }
     }
 
     /// Set switch state (simulates external switch input)
@@ -213,7 +213,7 @@ impl WasmCpu {
     /// Toggle a specific switch bit
     pub fn toggle_switch(&mut self, bit: u8) {
         if bit == 0 {
-            let pressed = self.emu.get_button();
+            let pressed = self.emu.is_button_pressed();
             self.emu.set_button_pressed(!pressed);
         }
     }

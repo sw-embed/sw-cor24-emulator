@@ -385,7 +385,7 @@ impl EmulatorCore {
         (self.cpu.io.leds & 1) == 0
     }
 
-    pub fn get_button(&self) -> bool {
+    pub fn is_button_pressed(&self) -> bool {
         // Button S2: bit 0, normally high, low = pressed
         self.cpu.io.switches & 1 == 0
     }
@@ -607,11 +607,11 @@ mod tests {
     #[test]
     fn test_button_toggle() {
         let mut emu = EmulatorCore::new();
-        assert!(!emu.get_button()); // not pressed (high)
+        assert!(!emu.is_button_pressed()); // not pressed (high)
         emu.set_button_pressed(true);
-        assert!(emu.get_button()); // pressed (low)
+        assert!(emu.is_button_pressed()); // pressed (low)
         emu.set_button_pressed(false);
-        assert!(!emu.get_button()); // released
+        assert!(!emu.is_button_pressed()); // released
     }
 
     #[test]
