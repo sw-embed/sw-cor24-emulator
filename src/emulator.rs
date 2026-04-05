@@ -803,4 +803,68 @@ mod tests {
         run_tick(&mut emu, 500);
         assert!(emu.is_halted(), "Should halt on '!'");
     }
+
+    /// Verify UART log captures a full echo session with coalesced output
+    #[test]
+    fn test_uart_log_echo_session() {
+        use crate::assembler::Assembler;
+        use crate::challenge::get_examples;
+
+        let examples = get_examples();
+        let echo = examples.iter().find(|(name, _, _)| name == "Echo").unwrap();
+
+        let mut asm = Assembler::new();
+        let result = asm.assemble(&echo.2);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let mut emu = EmulatorCore::new();
+        for (addr, &byte) in result.bytes.iter().enumerate() {
+            emu.write_byte(addr as u32, byte);
+        }
+        emu.set_pc(0);
+
+        fn run_tick(emu: &mut EmulatorCore, steps: u32) {
+            for _ in 0..steps {
+                if emu.is_halted() {
+                    break;
+                }
+                let r = emu.step();
+                if matches!(
+                    r.reason,
+                    StopReason::Halted | StopReason::InvalidInstruction(_)
+                ) {
+                    break;
+                }
+            }
+        }
+
+        // Prompt "?"
+        run_tick(&mut emu, 500);
+
+        // Send a few characters
+        emu.send_uart_byte(b'a');
+        run_tick(&mut emu, 500);
+        emu.send_uart_byte(b'b');
+        run_tick(&mut emu, 500);
+        emu.send_uart_byte(b'!');
+        run_tick(&mut emu, 500);
+
+        let log = emu.format_uart_log();
+
+        // Log should contain prompt output, input chars, and echo output
+        assert!(log.contains("OUT:"), "Log should have output entries:\n{}", log);
+        assert!(log.contains("IN:"), "Log should have input entries:\n{}", log);
+
+        // Verify the coalesced structure: prompt is one OUT group,
+        // then alternating IN/OUT for each echoed character
+        let lines: Vec<&str> = log.lines().collect();
+        assert!(lines.len() >= 3, "Should have multiple log lines:\n{}", log);
+
+        // First line should be the prompt output "?"
+        assert!(lines[0].contains("OUT:") && lines[0].contains("?"),
+            "First line should be prompt: {}", lines[0]);
+
+        // Print for manual inspection during development
+        eprintln!("--- UART Log ---\n{}", log);
+    }
 }
