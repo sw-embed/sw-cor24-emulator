@@ -21,8 +21,10 @@ pub enum StopReason {
     InvalidInstruction(u8),
     /// Emulator is paused (pause was requested)
     Paused,
-    /// Stack overflow: SP went below EBR base
+    /// Stack overflow: SP went below stack base
     StackOverflow(u32),
+    /// Stack underflow: SP went above stack top (initial SP)
+    StackUnderflow(u32),
 }
 
 /// Result of a run_batch call
@@ -63,8 +65,11 @@ pub struct EmulatorCore {
     paused: bool,
     /// Highest address written during load (tracks end of code+data)
     program_end: u32,
-    /// Lower bound of valid stack (EBR_BASE by default). SP below this triggers StackOverflow.
+    /// Valid stack region bounds. Both non-zero enables checking.
+    /// SP below stack_base → StackOverflow, SP above stack_top → StackUnderflow.
+    /// Set both to 0 to disable (e.g., custom runtimes with non-EBR stacks).
     stack_base: u32,
+    stack_top: u32,
 }
 
 impl Default for EmulatorCore {
@@ -83,6 +88,7 @@ impl EmulatorCore {
             paused: true, // start paused
             program_end: 0,
             stack_base: crate::cpu::state::EBR_BASE,
+            stack_top: crate::cpu::state::INITIAL_SP,
         }
     }
 
@@ -180,11 +186,16 @@ impl EmulatorCore {
             }
             count += 1;
 
-            // Check for stack overflow: SP (r4) below valid stack region
-            let sp = self.cpu.get_reg(4);
-            if sp != 0 && sp < self.stack_base {
-                self.cpu.halted = true;
-                break StopReason::StackOverflow(sp);
+            // Check for stack bounds: overflow (below base) or underflow (above top)
+            if self.stack_base != 0 {
+                let sp = self.cpu.get_reg(4);
+                if sp < self.stack_base {
+                    self.cpu.halted = true;
+                    break StopReason::StackOverflow(sp);
+                } else if sp > self.stack_top {
+                    self.cpu.halted = true;
+                    break StopReason::StackUnderflow(sp);
+                }
             }
         };
 
@@ -340,9 +351,11 @@ impl EmulatorCore {
         self.cpu.set_reg(reg, value);
     }
 
-    /// Set the lower bound for stack overflow detection.
-    pub fn set_stack_base(&mut self, addr: u32) {
-        self.stack_base = addr;
+    /// Set valid stack bounds. SP below `base` → overflow, SP above `top` → underflow.
+    /// Set both to 0 to disable stack checking (e.g., custom runtimes).
+    pub fn set_stack_bounds(&mut self, base: u32, top: u32) {
+        self.stack_base = base;
+        self.stack_top = top;
     }
 
     pub fn condition_flag(&self) -> bool {
@@ -929,6 +942,75 @@ mod tests {
             emu.get_reg(4) < crate::cpu::state::EBR_BASE,
             "SP 0x{:06X} should be below EBR base",
             emu.get_reg(4)
+        );
+    }
+
+    #[test]
+    fn test_stack_underflow_detected() {
+        // Pop more than pushed — SP goes above initial SP
+        let source = "
+            pop r0
+            pop r0
+            bra halt
+        halt:
+            bra halt
+        ";
+        let mut asm = crate::assembler::Assembler::new();
+        let result = asm.assemble(source);
+        assert!(result.errors.is_empty());
+
+        let mut emu = EmulatorCore::new();
+        for line in &result.lines {
+            for (i, &b) in line.bytes.iter().enumerate() {
+                emu.write_byte(line.address + i as u32, b);
+            }
+        }
+        emu.set_pc(0);
+        emu.resume();
+
+        let batch = emu.run_batch(100);
+        assert!(
+            matches!(batch.reason, StopReason::StackUnderflow(_)),
+            "Should stop with StackUnderflow, got {:?}",
+            batch.reason
+        );
+        assert!(emu.is_halted());
+        assert!(
+            emu.get_reg(4) > crate::cpu::state::INITIAL_SP,
+            "SP 0x{:06X} should be above initial SP",
+            emu.get_reg(4)
+        );
+    }
+
+    #[test]
+    fn test_stack_bounds_disabled() {
+        // Same blind recursion, but with bounds checking disabled — should not trigger
+        let source = "
+            bra  recurse
+        recurse:
+            push r0
+            bra  recurse
+        ";
+        let mut asm = crate::assembler::Assembler::new();
+        let result = asm.assemble(source);
+        assert!(result.errors.is_empty());
+
+        let mut emu = EmulatorCore::new();
+        for line in &result.lines {
+            for (i, &b) in line.bytes.iter().enumerate() {
+                emu.write_byte(line.address + i as u32, b);
+            }
+        }
+        emu.set_stack_bounds(0, 0); // disable checking
+        emu.set_pc(0);
+        emu.resume();
+
+        let batch = emu.run_batch(2000);
+        assert_eq!(
+            batch.reason,
+            StopReason::CycleLimit,
+            "Should hit cycle limit (no stack fault), got {:?}",
+            batch.reason
         );
     }
 }

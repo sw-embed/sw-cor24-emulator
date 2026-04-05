@@ -247,11 +247,11 @@ fn run_with_timing(
 
         match result.reason {
             cor24_emulator::emulator::StopReason::StackOverflow(sp) => {
-                eprintln!(
-                    "\nStack overflow: SP=0x{:06X} went below EBR base 0x{:06X}",
-                    sp,
-                    cor24_emulator::cpu::state::EBR_BASE
-                );
+                eprintln!("\nStack overflow: SP=0x{:06X} below stack base", sp);
+                break;
+            }
+            cor24_emulator::emulator::StopReason::StackUnderflow(sp) => {
+                eprintln!("\nStack underflow: SP=0x{:06X} above stack top", sp);
                 break;
             }
             _ if result.instructions_run == 0 => break, // halted or paused
@@ -1022,19 +1022,20 @@ fn run_terminal_mode(
         }
 
         match result.reason {
-            cor24_emulator::emulator::StopReason::StackOverflow(sp) => {
-                if is_tty {
-                    eprint!(
-                        "\r\n[Stack overflow: SP=0x{:06X} below EBR base 0x{:06X}]\r\n",
-                        sp,
-                        cor24_emulator::cpu::state::EBR_BASE
-                    );
+            cor24_emulator::emulator::StopReason::StackOverflow(sp)
+            | cor24_emulator::emulator::StopReason::StackUnderflow(sp) => {
+                let kind = if matches!(
+                    result.reason,
+                    cor24_emulator::emulator::StopReason::StackOverflow(_)
+                ) {
+                    "overflow"
                 } else {
-                    eprintln!(
-                        "\n[Stack overflow: SP=0x{:06X} below EBR base 0x{:06X}]",
-                        sp,
-                        cor24_emulator::cpu::state::EBR_BASE
-                    );
+                    "underflow"
+                };
+                if is_tty {
+                    eprint!("\r\n[Stack {}: SP=0x{:06X}]\r\n", kind, sp);
+                } else {
+                    eprintln!("\n[Stack {}: SP=0x{:06X}]", kind, sp);
                 }
                 break;
             }
@@ -1223,6 +1224,7 @@ fn main() {
             }
             if cli.stack_kb == 8 {
                 emu.set_reg(4, 0xFF0000);
+                emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
             }
             load_assembled(&mut emu, &result);
 
@@ -1389,6 +1391,7 @@ fn main() {
             }
             if cli.stack_kb == 8 {
                 emu.set_reg(4, 0xFF0000);
+                emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
             }
 
             load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches);

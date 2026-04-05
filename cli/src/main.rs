@@ -225,10 +225,15 @@ impl Debugger {
             }
             StopReason::StackOverflow(sp) => {
                 println!(
-                    "\nStack overflow: SP=0x{:06X} below EBR base 0x{:06X} after {} instructions",
-                    sp,
-                    cor24_emulator::cpu::state::EBR_BASE,
-                    result.instructions_run
+                    "\nStack overflow: SP=0x{:06X} after {} instructions",
+                    sp, result.instructions_run
+                );
+                self.cmd_trace("10");
+            }
+            StopReason::StackUnderflow(sp) => {
+                println!(
+                    "\nStack underflow: SP=0x{:06X} after {} instructions",
+                    sp, result.instructions_run
                 );
                 self.cmd_trace("10");
             }
@@ -285,11 +290,10 @@ impl Debugger {
                 println!("\nHalted after {} instructions", result.instructions_run)
             }
             StopReason::StackOverflow(sp) => {
-                println!(
-                    "\nStack overflow: SP=0x{:06X} below EBR base 0x{:06X}",
-                    sp,
-                    cor24_emulator::cpu::state::EBR_BASE,
-                );
+                println!("\nStack overflow: SP=0x{:06X}", sp);
+            }
+            StopReason::StackUnderflow(sp) => {
+                println!("\nStack underflow: SP=0x{:06X}", sp);
             }
             _ => {}
         }
