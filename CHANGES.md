@@ -1,5 +1,19 @@
 # Changes
 
+## 2026-04-05
+
+- **Fix**: `--terminal` mode no longer drops piped input beyond ~4KB (GitHub issue #2)
+  - Root cause: `stdin_buf` had a hard 4096-byte cap that silently discarded excess
+  - For piped stdin, all input is now pre-buffered before emulation starts
+  - Removed the 4096 cap from TTY path as well
+- **Stack bounds checking** — overflow and underflow detection in `EmulatorCore::run_batch()`
+  - `StopReason::StackOverflow(sp)` when SP drops below stack base (EBR_BASE)
+  - `StopReason::StackUnderflow(sp)` when SP rises above stack top (initial SP)
+  - `set_stack_bounds(base, top)` API — set both to 0 to disable for custom runtimes
+  - Default bounds: `EBR_BASE`..`INITIAL_SP` (3KB); `--stack-kilobytes 8` updates top
+  - Diagnostic messages in both `cor24-emu` and `cor24-dbg`
+- 5 new tests: stack overflow, underflow, bounds-disabled, plus 228 total passing
+
 ## 2026-03-29
 
 - **BREAKING**: Trim repository to emulator scope for COR24 ecosystem refactoring
