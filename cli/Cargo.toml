@@ -8,5 +8,10 @@ description = "COR24 CLI debugger and runner"
 name = "cor24-dbg"
 path = "src/main.rs"
 
+[[bin]]
+name = "cor24-emu"
+path = "src/run.rs"
+
 [dependencies]
 cor24-emulator = { path = ".." }
+libc = "0.2"

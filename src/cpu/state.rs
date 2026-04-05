@@ -73,11 +73,17 @@ pub struct UartLog {
 
 impl UartLog {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, direction: UartDirection, byte: u8, instruction: u64) {
-        self.entries.push(UartLogEntry { direction, byte, instruction });
+        self.entries.push(UartLogEntry {
+            direction,
+            byte,
+            instruction,
+        });
     }
 
     pub fn clear(&mut self) {
@@ -599,7 +605,9 @@ impl CpuState {
                     if value != 0 {
                         self.io.uart_output.push(value as char);
                     }
-                    self.io.uart_log.push(UartDirection::Output, value, self.instructions);
+                    self.io
+                        .uart_log
+                        .push(UartDirection::Output, value, self.instructions);
                     // TX busy for N cycles (simulates transmission time)
                     if self.io.uart_tx_busy_cycles > 0 {
                         self.io.uart_tx_busy = true;
@@ -639,7 +647,9 @@ impl CpuState {
         }
         self.io.uart_rx = ch;
         self.io.uart_rx_ready = true;
-        self.io.uart_log.push(UartDirection::Input, ch, self.instructions);
+        self.io
+            .uart_log
+            .push(UartDirection::Input, ch, self.instructions);
     }
 
     /// Read a 24-bit word from memory (little-endian)
@@ -1144,7 +1154,10 @@ mod tests {
         cpu.write_byte(IO_UARTDATA, b'H');
         cpu.write_byte(IO_UARTDATA, b'i');
         assert_eq!(cpu.io.uart_log.entries().len(), 2);
-        assert_eq!(cpu.io.uart_log.entries()[0].direction, UartDirection::Output);
+        assert_eq!(
+            cpu.io.uart_log.entries()[0].direction,
+            UartDirection::Output
+        );
         assert_eq!(cpu.io.uart_log.entries()[0].byte, b'H');
     }
 
