@@ -106,7 +106,9 @@ fn print_long_help() {
     println!("  (REPLs, shells, monitors). Raw terminal mode: Ctrl-C sends 0x03 to UART,");
     println!("  Ctrl-] exits. Use --echo for programs that don't echo typed characters.");
     println!("  Defaults to max speed and 1-hour time limit.");
-    println!("  Pipe-aware: works with piped input (echo '(+ 1 2)' | cor24-emu --run repl.s --terminal).");
+    println!(
+        "  Pipe-aware: works with piped input (echo '(+ 1 2)' | cor24-emu --run repl.s --terminal)."
+    );
     println!();
     println!("UART I/O Registers:");
     println!("  FF0100  Data: write to transmit, read to receive (auto-acknowledges RX)");
@@ -486,12 +488,17 @@ fn parse_args() -> CliArgs {
                         Some((file, addr_str)) => match parse_numeric_addr(addr_str.trim()) {
                             Some(a) => cli.load_binaries.push((file.to_string(), a)),
                             None => {
-                                eprintln!("Error: invalid address in --load-binary '{}' (expected <file>@<addr>)", spec);
+                                eprintln!(
+                                    "Error: invalid address in --load-binary '{}' (expected <file>@<addr>)",
+                                    spec
+                                );
                                 std::process::exit(1);
                             }
                         },
                         None => {
-                            eprintln!("Error: --load-binary requires <file>@<addr> format (e.g., hello.p24@0x010000)");
+                            eprintln!(
+                                "Error: --load-binary requires <file>@<addr> format (e.g., hello.p24@0x010000)"
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -503,7 +510,10 @@ fn parse_args() -> CliArgs {
                     match parse_numeric_addr(args[i + 1].trim()) {
                         Some(a) => cli.base_addr = a,
                         None => {
-                            eprintln!("Error: invalid --base-addr '{}' (expected address, e.g., 0x010000)", args[i + 1]);
+                            eprintln!(
+                                "Error: invalid --base-addr '{}' (expected address, e.g., 0x010000)",
+                                args[i + 1]
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -520,13 +530,18 @@ fn parse_args() -> CliArgs {
                             match (addr, val) {
                                 (Some(a), Some(v)) => cli.patches.push((a, v)),
                                 _ => {
-                                    eprintln!("Error: invalid --patch '{}' (expected <addr>=<value>, e.g., 0x09D7=0x010000)", spec);
+                                    eprintln!(
+                                        "Error: invalid --patch '{}' (expected <addr>=<value>, e.g., 0x09D7=0x010000)",
+                                        spec
+                                    );
                                     std::process::exit(1);
                                 }
                             }
                         }
                         None => {
-                            eprintln!("Error: --patch requires <addr>=<value> format (e.g., 0x09D7=0x010000)");
+                            eprintln!(
+                                "Error: --patch requires <addr>=<value> format (e.g., 0x09D7=0x010000)"
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -736,10 +751,7 @@ fn run_step_mode(emu: &mut EmulatorCore, max_instructions: i64, uart_input: &[u8
         max_instructions as u64
     };
 
-    println!(
-        "{:>5} {:>8}  {:<24}  Changes",
-        "#", "PC", "Instruction"
-    );
+    println!("{:>5} {:>8}  {:<24}  Changes", "#", "PC", "Instruction");
     println!("{}", "-".repeat(80));
 
     for n in 0..max {
@@ -1350,7 +1362,9 @@ fn main() {
                         println!("Entry point: 0x{:06X}", addr);
                     }
                     None => {
-                        eprintln!("Error: --entry must be a numeric address in binary mode (e.g., 0x000000)");
+                        eprintln!(
+                            "Error: --entry must be a numeric address in binary mode (e.g., 0x000000)"
+                        );
                         std::process::exit(1);
                     }
                 }
@@ -1527,13 +1541,13 @@ mod tests {
     fn test_load_p24_strips_header() {
         let tmp = std::env::temp_dir().join("cor24_emu_test.p24");
         let mut data = vec![0x50, 0x32, 0x34, 0x00]; // P24 magic
-        data.extend_from_slice(&[0x01]);              // version
-        data.extend_from_slice(&[0x00, 0x00, 0x00]);  // entry_point
-        data.extend_from_slice(&[0x03, 0x00, 0x00]);  // code_size
-        data.extend_from_slice(&[0x00, 0x00, 0x00]);  // data_size
-        data.extend_from_slice(&[0x00, 0x00, 0x00]);  // global_count
-        data.push(0x00);                              // reserved
-        data.extend_from_slice(&[0xAA, 0xBB, 0xCC]);  // body
+        data.extend_from_slice(&[0x01]); // version
+        data.extend_from_slice(&[0x00, 0x00, 0x00]); // entry_point
+        data.extend_from_slice(&[0x03, 0x00, 0x00]); // code_size
+        data.extend_from_slice(&[0x00, 0x00, 0x00]); // data_size
+        data.extend_from_slice(&[0x00, 0x00, 0x00]); // global_count
+        data.push(0x00); // reserved
+        data.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // body
         assert_eq!(data.len(), P24_HEADER_SIZE + 3);
         fs::write(&tmp, &data).unwrap();
 

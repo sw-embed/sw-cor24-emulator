@@ -130,11 +130,11 @@ impl UartLog {
         let mut groups: Vec<(UartDirection, Vec<u8>)> = Vec::new();
 
         for entry in &self.entries {
-            if let Some(last) = groups.last_mut() {
-                if last.0 == entry.direction {
-                    last.1.push(entry.byte);
-                    continue;
-                }
+            if let Some(last) = groups.last_mut()
+                && last.0 == entry.direction
+            {
+                last.1.push(entry.byte);
+                continue;
             }
             groups.push((entry.direction, vec![entry.byte]));
         }
