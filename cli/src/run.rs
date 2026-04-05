@@ -245,8 +245,17 @@ fn run_with_timing(
             }
         }
 
-        if result.instructions_run == 0 {
-            break; // halted or paused
+        match result.reason {
+            cor24_emulator::emulator::StopReason::StackOverflow(sp) => {
+                eprintln!(
+                    "\nStack overflow: SP=0x{:06X} went below EBR base 0x{:06X}",
+                    sp,
+                    cor24_emulator::cpu::state::EBR_BASE
+                );
+                break;
+            }
+            _ if result.instructions_run == 0 => break, // halted or paused
+            _ => {}
         }
 
         if speed > 0 {
@@ -908,6 +917,18 @@ fn run_terminal_mode(
     let mut stdout = std::io::stdout();
     let mut stdin_eof = false;
 
+    // For piped stdin, pre-buffer all input before starting emulation.
+    // This avoids the blocking read() stalling the emulation loop and
+    // ensures all piped bytes are available (fixes GitHub issue #2).
+    if !is_tty {
+        use std::io::Read;
+        let mut all_input = Vec::new();
+        if std::io::stdin().read_to_end(&mut all_input).is_ok() {
+            stdin_buf.extend(all_input.iter());
+            stdin_eof = true;
+        }
+    }
+
     emu.resume();
 
     loop {
@@ -966,9 +987,7 @@ fn run_terminal_mode(
                         }
                         return total_instructions;
                     }
-                    if stdin_buf.len() < 4096 {
-                        stdin_buf.push_back(b);
-                    }
+                    stdin_buf.push_back(b);
                     if echo {
                         match b {
                             b'\r' | b'\n' => {
@@ -1002,13 +1021,32 @@ fn run_terminal_mode(
             }
         }
 
-        if result.instructions_run == 0 {
-            if is_tty {
-                eprint!("\r\n[CPU halted]\r\n");
-            } else {
-                eprintln!("\n[CPU halted]");
+        match result.reason {
+            cor24_emulator::emulator::StopReason::StackOverflow(sp) => {
+                if is_tty {
+                    eprint!(
+                        "\r\n[Stack overflow: SP=0x{:06X} below EBR base 0x{:06X}]\r\n",
+                        sp,
+                        cor24_emulator::cpu::state::EBR_BASE
+                    );
+                } else {
+                    eprintln!(
+                        "\n[Stack overflow: SP=0x{:06X} below EBR base 0x{:06X}]",
+                        sp,
+                        cor24_emulator::cpu::state::EBR_BASE
+                    );
+                }
+                break;
             }
-            break;
+            _ if result.instructions_run == 0 => {
+                if is_tty {
+                    eprint!("\r\n[CPU halted]\r\n");
+                } else {
+                    eprintln!("\n[CPU halted]");
+                }
+                break;
+            }
+            _ => {}
         }
 
         if speed > 0 {
