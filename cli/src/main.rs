@@ -7,15 +7,42 @@
 use cor24_emulator::emulator::{EmulatorCore, StopReason};
 use std::io::{self, BufRead, Write};
 
+const COPYRIGHT: &str = "Copyright (c) 2026 Michael A Wright";
+const LICENSE: &str = "MIT";
+const REPOSITORY: &str = "https://github.com/sw-embed/sw-cor24-emulator";
+
+fn print_version() {
+    println!(
+        "cor24-dbg {}\n{}\nLicense: {}\nRepository: {}\n\nBuild Information:\n  Host: {}\n  Commit: {}\n  Timestamp: {}",
+        env!("CARGO_PKG_VERSION"),
+        COPYRIGHT,
+        LICENSE,
+        REPOSITORY,
+        env!("VERGEN_BUILD_HOST"),
+        env!("VERGEN_GIT_SHA_SHORT"),
+        env!("VERGEN_BUILD_TIMESTAMP"),
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
+
+    if args.contains(&"-V".to_string()) || args.contains(&"--version".to_string()) {
+        print_version();
+        return;
+    }
+
+    if args.len() < 2 || args.contains(&"-h".to_string()) || args.contains(&"--help".to_string()) {
         eprintln!("cor24-dbg: MakerLisp COR24 debugger\n");
         eprintln!("Usage:");
         eprintln!("  cor24-dbg <file.lgo>                Load LGO file");
         eprintln!("  cor24-dbg --entry <addr> <file.lgo>  Set entry point");
+        eprintln!("  cor24-dbg -V | --version             Show version info");
         eprintln!("\nCommands: run, step, break, info, examine, disas, reset, quit");
-        std::process::exit(1);
+        if args.len() < 2 {
+            std::process::exit(1);
+        }
+        return;
     }
 
     let mut entry_override: Option<u32> = None;

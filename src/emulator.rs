@@ -852,8 +852,16 @@ mod tests {
         let log = emu.format_uart_log();
 
         // Log should contain prompt output, input chars, and echo output
-        assert!(log.contains("OUT:"), "Log should have output entries:\n{}", log);
-        assert!(log.contains("IN:"), "Log should have input entries:\n{}", log);
+        assert!(
+            log.contains("OUT:"),
+            "Log should have output entries:\n{}",
+            log
+        );
+        assert!(
+            log.contains("IN:"),
+            "Log should have input entries:\n{}",
+            log
+        );
 
         // Verify the coalesced structure: prompt is one OUT group,
         // then alternating IN/OUT for each echoed character
@@ -861,8 +869,11 @@ mod tests {
         assert!(lines.len() >= 3, "Should have multiple log lines:\n{}", log);
 
         // First line should be the prompt output "?"
-        assert!(lines[0].contains("OUT:") && lines[0].contains("?"),
-            "First line should be prompt: {}", lines[0]);
+        assert!(
+            lines[0].contains("OUT:") && lines[0].contains("?"),
+            "First line should be prompt: {}",
+            lines[0]
+        );
 
         // Print for manual inspection during development
         eprintln!("--- UART Log ---\n{}", log);
