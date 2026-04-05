@@ -22,6 +22,7 @@ pub use assembler::{AssembledLine, Assembler, AssemblyResult};
 pub use challenge::{Challenge, get_challenges, get_examples};
 pub use cpu::{
     CpuState, DecodeRom, ExecuteResult, Executor, INITIAL_SP, MEMORY_SIZE, RESET_ADDRESS,
+    UartDirection, UartLog, UartLogEntry,
 };
 pub use emulator::{BatchResult, CpuSnapshot, EmulatorCore, StopReason};
 pub use loader::{LoadResult, load_lgo};

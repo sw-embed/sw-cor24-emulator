@@ -412,6 +412,14 @@ impl EmulatorCore {
         self.cpu.io.uart_output.clear();
     }
 
+    pub fn uart_log(&self) -> &crate::cpu::state::UartLog {
+        &self.cpu.io.uart_log
+    }
+
+    pub fn format_uart_log(&self) -> String {
+        self.cpu.io.uart_log.format()
+    }
+
     pub fn send_uart_byte(&mut self, byte: u8) {
         self.cpu.uart_send_rx(byte);
     }

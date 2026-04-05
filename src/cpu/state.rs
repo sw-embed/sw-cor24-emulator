@@ -48,6 +48,110 @@ pub const IO_UARTSTAT: u32 = 0xFF0101;
 /// TODO: remove once web UI is updated to use region-based model.
 pub const MEMORY_SIZE: usize = SRAM_SIZE;
 
+/// Direction of a UART transaction
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UartDirection {
+    /// Input: byte sent to CPU via RX (host → CPU)
+    Input,
+    /// Output: byte transmitted by CPU via TX (CPU → host)
+    Output,
+}
+
+/// A single UART transaction record
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UartLogEntry {
+    pub direction: UartDirection,
+    pub byte: u8,
+    pub instruction: u64,
+}
+
+/// Chronological log of all UART input and output
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct UartLog {
+    entries: Vec<UartLogEntry>,
+}
+
+impl UartLog {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn push(&mut self, direction: UartDirection, byte: u8, instruction: u64) {
+        self.entries.push(UartLogEntry { direction, byte, instruction });
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub fn entries(&self) -> &[UartLogEntry] {
+        &self.entries
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Format the log with coalesced consecutive same-direction bytes.
+    /// Echo patterns (alternating input/output of the same byte) are grouped
+    /// so you see the input line followed by the output line.
+    pub fn format(&self) -> String {
+        if self.entries.is_empty() {
+            return String::new();
+        }
+
+        // Group consecutive same-direction entries
+        let groups = self.coalesce();
+
+        let mut out = String::new();
+        for (dir, bytes) in &groups {
+            let label = match dir {
+                UartDirection::Input => " IN",
+                UartDirection::Output => "OUT",
+            };
+            out.push_str(&format!("  {}:  \"{}\"", label, escape_bytes(bytes)));
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Coalesce entries into groups of (direction, bytes).
+    /// Adjacent same-direction entries merge. Single-byte echo pairs
+    /// (IN byte, OUT same-byte) are kept separate but not interleaved
+    /// further — they naturally group when the program reads-then-writes
+    /// in batches.
+    fn coalesce(&self) -> Vec<(UartDirection, Vec<u8>)> {
+        let mut groups: Vec<(UartDirection, Vec<u8>)> = Vec::new();
+
+        for entry in &self.entries {
+            if let Some(last) = groups.last_mut() {
+                if last.0 == entry.direction {
+                    last.1.push(entry.byte);
+                    continue;
+                }
+            }
+            groups.push((entry.direction, vec![entry.byte]));
+        }
+
+        groups
+    }
+}
+
+/// Escape bytes for display: show printable ASCII as-is, CR/LF as \r/\n, others as \xHH
+fn escape_bytes(bytes: &[u8]) -> String {
+    let mut s = String::new();
+    for &b in bytes {
+        match b {
+            b'\n' => s.push_str("\\n"),
+            b'\r' => s.push_str("\\r"),
+            b'\t' => s.push_str("\\t"),
+            0x20..=0x7E => s.push(b as char),
+            _ => s.push_str(&format!("\\x{:02X}", b)),
+        }
+    }
+    s
+}
+
 /// I/O peripheral state
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct IoState {
@@ -77,6 +181,8 @@ pub struct IoState {
     pub int_enable: u8,
     /// Output text buffer (for UART terminal)
     pub uart_output: String,
+    /// Chronological log of all UART input and output
+    pub uart_log: UartLog,
 }
 
 impl IoState {
@@ -95,6 +201,7 @@ impl IoState {
             uart_rx_overflow: false,
             int_enable: 0,
             uart_output: String::new(),
+            uart_log: UartLog::new(),
         }
     }
 }
@@ -492,6 +599,7 @@ impl CpuState {
                     if value != 0 {
                         self.io.uart_output.push(value as char);
                     }
+                    self.io.uart_log.push(UartDirection::Output, value, self.instructions);
                     // TX busy for N cycles (simulates transmission time)
                     if self.io.uart_tx_busy_cycles > 0 {
                         self.io.uart_tx_busy = true;
@@ -531,6 +639,7 @@ impl CpuState {
         }
         self.io.uart_rx = ch;
         self.io.uart_rx_ready = true;
+        self.io.uart_log.push(UartDirection::Input, ch, self.instructions);
     }
 
     /// Read a 24-bit word from memory (little-endian)
@@ -927,5 +1036,135 @@ mod tests {
         assert_eq!(CpuState::sign_extend_8(0x7F), 0x00007F);
         assert_eq!(CpuState::sign_extend_8(0x80), 0xFFFF80);
         assert_eq!(CpuState::sign_extend_8(0xFF), 0xFFFFFF);
+    }
+
+    // ========== UART Log Tests ==========
+
+    #[test]
+    fn test_uart_log_empty() {
+        let log = UartLog::new();
+        assert!(log.is_empty());
+        assert_eq!(log.format(), "");
+    }
+
+    #[test]
+    fn test_uart_log_output_only() {
+        let mut log = UartLog::new();
+        for &b in b"Hi\n" {
+            log.push(UartDirection::Output, b, 0);
+        }
+        assert_eq!(log.format(), "  OUT:  \"Hi\\n\"\n");
+    }
+
+    #[test]
+    fn test_uart_log_input_only() {
+        let mut log = UartLog::new();
+        for &b in b"abc" {
+            log.push(UartDirection::Input, b, 0);
+        }
+        assert_eq!(log.format(), "   IN:  \"abc\"\n");
+    }
+
+    #[test]
+    fn test_uart_log_coalesce_same_direction() {
+        let mut log = UartLog::new();
+        log.push(UartDirection::Output, b'H', 1);
+        log.push(UartDirection::Output, b'i', 2);
+        log.push(UartDirection::Output, b'\n', 3);
+        let groups = log.coalesce();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, b"Hi\n");
+    }
+
+    #[test]
+    fn test_uart_log_echo_pattern() {
+        // Simulates: prompt "?" output, then input 'a', then echo output 'A'
+        let mut log = UartLog::new();
+        log.push(UartDirection::Output, b'?', 10);
+        log.push(UartDirection::Input, b'a', 20);
+        log.push(UartDirection::Output, b'A', 30);
+        let formatted = log.format();
+        assert_eq!(formatted, "  OUT:  \"?\"\n   IN:  \"a\"\n  OUT:  \"A\"\n");
+    }
+
+    #[test]
+    fn test_uart_log_batch_echo() {
+        // Input "abc" then output "ABC" — no interleaving
+        let mut log = UartLog::new();
+        for &b in b"abc" {
+            log.push(UartDirection::Input, b, 0);
+        }
+        for &b in b"ABC" {
+            log.push(UartDirection::Output, b, 0);
+        }
+        let groups = log.coalesce();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], (UartDirection::Input, b"abc".to_vec()));
+        assert_eq!(groups[1], (UartDirection::Output, b"ABC".to_vec()));
+    }
+
+    #[test]
+    fn test_uart_log_interleaved_echo() {
+        // Character-by-character echo: in 'a', out 'A', in 'b', out 'B'
+        let mut log = UartLog::new();
+        log.push(UartDirection::Input, b'a', 1);
+        log.push(UartDirection::Output, b'A', 2);
+        log.push(UartDirection::Input, b'b', 3);
+        log.push(UartDirection::Output, b'B', 4);
+        let groups = log.coalesce();
+        assert_eq!(groups.len(), 4); // each is its own group
+        let formatted = log.format();
+        assert!(formatted.contains("IN:  \"a\""));
+        assert!(formatted.contains("OUT:  \"A\""));
+    }
+
+    #[test]
+    fn test_uart_log_clear() {
+        let mut log = UartLog::new();
+        log.push(UartDirection::Output, b'x', 0);
+        assert!(!log.is_empty());
+        log.clear();
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn test_uart_log_escape_control_chars() {
+        let mut log = UartLog::new();
+        log.push(UartDirection::Output, b'\r', 0);
+        log.push(UartDirection::Output, b'\n', 0);
+        log.push(UartDirection::Output, b'\t', 0);
+        log.push(UartDirection::Output, 0x01, 0);
+        assert_eq!(log.format(), "  OUT:  \"\\r\\n\\t\\x01\"\n");
+    }
+
+    #[test]
+    fn test_uart_log_recorded_on_tx() {
+        let mut cpu = CpuState::new();
+        cpu.io.uart_tx_busy_cycles = 0; // instant TX
+        cpu.write_byte(IO_UARTDATA, b'H');
+        cpu.write_byte(IO_UARTDATA, b'i');
+        assert_eq!(cpu.io.uart_log.entries().len(), 2);
+        assert_eq!(cpu.io.uart_log.entries()[0].direction, UartDirection::Output);
+        assert_eq!(cpu.io.uart_log.entries()[0].byte, b'H');
+    }
+
+    #[test]
+    fn test_uart_log_recorded_on_rx() {
+        let mut cpu = CpuState::new();
+        cpu.uart_send_rx(b'A');
+        assert_eq!(cpu.io.uart_log.entries().len(), 1);
+        assert_eq!(cpu.io.uart_log.entries()[0].direction, UartDirection::Input);
+        assert_eq!(cpu.io.uart_log.entries()[0].byte, b'A');
+    }
+
+    #[test]
+    fn test_uart_log_cleared_on_reset() {
+        let mut cpu = CpuState::new();
+        cpu.io.uart_tx_busy_cycles = 0;
+        cpu.write_byte(IO_UARTDATA, b'X');
+        cpu.uart_send_rx(b'Y');
+        assert_eq!(cpu.io.uart_log.entries().len(), 2);
+        cpu.reset();
+        assert!(cpu.io.uart_log.is_empty());
     }
 }

@@ -18,4 +18,4 @@ pub use decode_rom::DECODE_ROM;
 pub use encode::*;
 pub use executor::{ExecuteResult, Executor};
 pub use instruction::{DecodedInstruction, InstructionFormat, Opcode, REG_NAMES};
-pub use state::{CpuState, DecodeRom, INITIAL_SP, MEMORY_SIZE, RESET_ADDRESS};
+pub use state::{CpuState, DecodeRom, INITIAL_SP, MEMORY_SIZE, RESET_ADDRESS, UartDirection, UartLog, UartLogEntry};
