@@ -1,5 +1,26 @@
 # Changes
 
+## 2026-04-15
+
+- **Quiet UART output** — `--quiet` / `-q` writes UART TX as raw bytes to stdout,
+  routing assembly/run/halt chatter to stderr (GitHub issue #1)
+  - Useful for test-suite output: `cor24-emu --run tests.s --quiet > results.txt`
+- **`--uart-file <path>`** — read file contents into UART RX buffer,
+  appending `0x04` (EOT) after the file body (GitHub issue #2)
+  - Works in `--terminal` mode too (pre-loaded into the stdin buffer)
+  - Removes the ~12KB shell-argument limit of `--uart-input`
+- **Control-flow guards** (opt-in, GitHub issue #3)
+  - `--guard-jumps [--code-end <addr>]` — halt immediately when PC leaves
+    the code region (catches jumps into stack, unmapped memory, or mid-data)
+  - `--canary <addr>[=value]` — magic word at `addr` (default `0xDEADBE`);
+    halt if any store modifies it
+  - `--watch-range <lo> <hi>` — snapshot byte range at startup; halt on any
+    modification; repeatable
+  - When any guard is active, execution runs in 256-instruction batches so
+    diagnostics fire close to the offending instruction
+- `load_assembled()` and `load_binaries_and_patches()` now update
+  `program_end`, enabling `--guard-jumps` to derive `code_end` automatically
+
 ## 2026-04-05
 
 - **Fix**: `--terminal` mode no longer drops piped input beyond ~4KB (GitHub issue #2)

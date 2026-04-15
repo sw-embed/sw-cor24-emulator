@@ -60,6 +60,8 @@ fn print_short_help() {
     );
     println!("  --max-instructions, -n <count>  Stop after N instructions (-1 = no limit)");
     println!("  --uart-input, -u <str> Send characters to UART RX (supports \\n, \\x21)");
+    println!("  --uart-file <path>     Read file contents into UART RX buffer (appends 0x04 EOF)");
+    println!("  --quiet, -q            UART TX as plain text on stdout; logs to stderr");
     println!("  --entry, -e <label|addr> Set entry point (label name or numeric address)");
     println!("  --dump                 Dump CPU state, I/O, and non-zero memory after halt");
     println!("  --dump-uart            Show UART transaction log (chronological IN/OUT)");
@@ -73,6 +75,12 @@ fn print_short_help() {
     println!("  --stack-kilobytes <3|8>  EBR stack size (default: 3, max: 8)");
     println!("  --switch <on|off>      Set button S2 state (default: off/released)");
     println!("  --uart-never-ready     UART TX stays busy forever (test polling)");
+    println!(
+        "  --guard-jumps          Halt if PC leaves the code region (catches bad control flow)"
+    );
+    println!("  --code-end <addr>      Upper bound for --guard-jumps (default: program_end)");
+    println!("  --canary <addr>[=val]  Halt if memory at addr changes (default magic: 0xDEADBE)");
+    println!("  --watch-range <lo> <hi> Halt if any byte in [lo, hi] changes (repeatable)");
     println!();
     println!("Examples:");
     println!("  cor24-emu --demo --speed 100000 --time 10");
@@ -151,6 +159,83 @@ fn print_leds(leds: u8) {
     std::io::stdout().flush().ok();
 }
 
+/// Guards that halt execution when bad control flow or memory writes occur.
+struct GuardState {
+    guard_jumps: bool,
+    code_end: u32,
+    canaries: Vec<(u32, u32)>,
+    watch_ranges: Vec<(u32, u32, Vec<u8>)>,
+}
+
+impl GuardState {
+    fn install(cli: &CliArgs, emu: &mut EmulatorCore) -> Self {
+        for &(addr, value) in &cli.canaries {
+            emu.write_byte(addr, (value & 0xFF) as u8);
+            emu.write_byte(addr + 1, ((value >> 8) & 0xFF) as u8);
+            emu.write_byte(addr + 2, ((value >> 16) & 0xFF) as u8);
+        }
+        let watch_ranges = cli
+            .watch_ranges
+            .iter()
+            .map(|&(lo, hi)| {
+                let snap: Vec<u8> = (lo..=hi).map(|a| emu.read_byte(a)).collect();
+                (lo, hi, snap)
+            })
+            .collect();
+        let code_end = cli.code_end.unwrap_or_else(|| {
+            let pe = emu.program_end();
+            if pe == 0 { 0x100000 } else { pe }
+        });
+        Self {
+            guard_jumps: cli.guard_jumps,
+            code_end,
+            canaries: cli.canaries.clone(),
+            watch_ranges,
+        }
+    }
+
+    fn active(&self) -> bool {
+        self.guard_jumps || !self.canaries.is_empty() || !self.watch_ranges.is_empty()
+    }
+
+    /// Returns a diagnostic message if a guard fired.
+    fn check(&self, emu: &EmulatorCore) -> Option<String> {
+        if self.guard_jumps {
+            let pc = emu.pc();
+            if pc >= self.code_end {
+                return Some(format!(
+                    "[GUARD] PC=0x{:06X} outside code region [0, 0x{:06X})",
+                    pc, self.code_end
+                ));
+            }
+        }
+        for &(addr, expected) in &self.canaries {
+            let actual = emu.read_word(addr);
+            if actual != expected {
+                return Some(format!(
+                    "[GUARD] canary @ 0x{:06X} modified: expected 0x{:06X}, got 0x{:06X}",
+                    addr, expected, actual
+                ));
+            }
+        }
+        for (lo, hi, snap) in &self.watch_ranges {
+            for (i, &orig) in snap.iter().enumerate() {
+                let addr = lo + i as u32;
+                if addr > *hi {
+                    break;
+                }
+                if emu.read_byte(addr) != orig {
+                    return Some(format!(
+                        "[GUARD] watch-range write @ 0x{:06X} in [0x{:06X}, 0x{:06X}]",
+                        addr, lo, hi
+                    ));
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Run emulator with timing, instruction limit, and queued UART input.
 /// UART input bytes are fed one at a time after each batch, simulating
 /// character-by-character typing at the emulated UART RX register.
@@ -160,11 +245,21 @@ fn run_with_timing(
     time_limit: f64,
     max_instructions: i64,
     uart_input: &[u8],
+    quiet: bool,
+    guard: &GuardState,
 ) -> u64 {
     let start = Instant::now();
     let time_limit_duration = Duration::from_secs_f64(time_limit);
 
-    let batch_size: u64 = if speed == 0 {
+    let batch_size: u64 = if guard.active() {
+        // Smaller batches when guards are active so diagnostics fire close
+        // to the offending instruction.
+        if speed == 0 {
+            256
+        } else {
+            (speed / 100).clamp(1, 256)
+        }
+    } else if speed == 0 {
         10000
     } else {
         (speed / 100).max(1)
@@ -205,7 +300,9 @@ fn run_with_timing(
         // Check for LED changes
         let led = emu.get_led();
         if led != prev_led {
-            print_leds(led);
+            if !quiet {
+                print_leds(led);
+            }
             prev_led = led;
         }
 
@@ -213,14 +310,20 @@ fn run_with_timing(
         let output = emu.get_uart_output();
         if output.len() > prev_uart_len {
             let new_chars = &output[prev_uart_len..];
-            for ch in new_chars.chars() {
-                if ch == '\n' {
-                    println!("[UART TX @ {}] '\\n'", total_instructions);
-                } else {
-                    println!(
-                        "[UART TX @ {}] '{}'  (0x{:02X})",
-                        total_instructions, ch, ch as u8
-                    );
+            if quiet {
+                let mut stdout = std::io::stdout();
+                let _ = stdout.write_all(new_chars.as_bytes());
+                let _ = stdout.flush();
+            } else {
+                for ch in new_chars.chars() {
+                    if ch == '\n' {
+                        println!("[UART TX @ {}] '\\n'", total_instructions);
+                    } else {
+                        println!(
+                            "[UART TX @ {}] '{}'  (0x{:02X})",
+                            total_instructions, ch, ch as u8
+                        );
+                    }
                 }
             }
             prev_uart_len = output.len();
@@ -234,15 +337,22 @@ fn run_with_timing(
             if uart_status & 0x01 == 0 {
                 let ch = uart_input[uart_input_pos];
                 emu.send_uart_byte(ch);
-                if ch == b'!' {
-                    println!("[UART RX] '!'  (0x21) — halt signal");
-                } else if ch == b'\n' {
-                    println!("[UART RX] '\\n'");
-                } else {
-                    println!("[UART RX] '{}'  (0x{:02X})", ch as char, ch);
+                if !quiet {
+                    if ch == b'!' {
+                        println!("[UART RX] '!'  (0x21) — halt signal");
+                    } else if ch == b'\n' {
+                        println!("[UART RX] '\\n'");
+                    } else {
+                        println!("[UART RX] '{}'  (0x{:02X})", ch as char, ch);
+                    }
                 }
                 uart_input_pos += 1;
             }
+        }
+
+        if let Some(msg) = guard.check(emu) {
+            eprintln!("\n{}", msg);
+            break;
         }
 
         match result.reason {
@@ -272,12 +382,20 @@ fn run_with_timing(
 
 /// Load assembled bytes into emulator at their correct addresses
 fn load_assembled(emu: &mut EmulatorCore, result: &AssemblyResult) {
+    let mut end: u32 = 0;
     for line in &result.lines {
         if !line.bytes.is_empty() {
             for (i, &b) in line.bytes.iter().enumerate() {
                 emu.write_byte(line.address + i as u32, b);
             }
+            let line_end = line.address + line.bytes.len() as u32;
+            if line_end > end {
+                end = line_end;
+            }
         }
+    }
+    if end > 0 {
+        emu.load_program_extent(end);
     }
 }
 
@@ -332,6 +450,11 @@ struct CliArgs {
     patches: Vec<(u32, u32)>,
     base_addr: u32,
     switch_pressed: bool,
+    quiet: bool,
+    guard_jumps: bool,
+    code_end: Option<u32>,
+    canaries: Vec<(u32, u32)>,
+    watch_ranges: Vec<(u32, u32)>,
 }
 
 /// Parse a numeric address string: 0x prefix, h suffix, or decimal.
@@ -367,6 +490,11 @@ fn parse_args() -> CliArgs {
         patches: Vec::new(),
         base_addr: 0,
         switch_pressed: false,
+        quiet: false,
+        guard_jumps: false,
+        code_end: None,
+        canaries: Vec::new(),
+        watch_ranges: Vec::new(),
     };
 
     let mut i = 1;
@@ -436,6 +564,82 @@ fn parse_args() -> CliArgs {
                     }
                     cli.uart_input = bytes;
                     i += 1;
+                }
+            }
+            "--uart-file" => {
+                if i + 1 < args.len() {
+                    let path = &args[i + 1];
+                    match fs::read(path) {
+                        Ok(mut bytes) => {
+                            bytes.push(0x04);
+                            cli.uart_input = bytes;
+                        }
+                        Err(e) => {
+                            eprintln!("Error: cannot read --uart-file '{}': {}", path, e);
+                            std::process::exit(1);
+                        }
+                    }
+                    i += 1;
+                }
+            }
+            "--quiet" | "-q" => {
+                cli.quiet = true;
+            }
+            "--guard-jumps" => {
+                cli.guard_jumps = true;
+            }
+            "--code-end" => {
+                if i + 1 < args.len() {
+                    match parse_numeric_addr(args[i + 1].trim()) {
+                        Some(a) => cli.code_end = Some(a),
+                        None => {
+                            eprintln!("Error: invalid --code-end '{}'", args[i + 1]);
+                            std::process::exit(1);
+                        }
+                    }
+                    i += 1;
+                }
+            }
+            "--canary" => {
+                if i + 1 < args.len() {
+                    let spec = &args[i + 1];
+                    let (addr_str, val_str) = match spec.split_once('=') {
+                        Some((a, v)) => (a, v),
+                        None => (spec.as_str(), "0xDEADBE"),
+                    };
+                    match (
+                        parse_numeric_addr(addr_str.trim()),
+                        parse_numeric_addr(val_str.trim()),
+                    ) {
+                        (Some(a), Some(v)) => cli.canaries.push((a, v)),
+                        _ => {
+                            eprintln!(
+                                "Error: invalid --canary '{}' (expected <addr>[=<value>])",
+                                spec
+                            );
+                            std::process::exit(1);
+                        }
+                    }
+                    i += 1;
+                }
+            }
+            "--watch-range" => {
+                if i + 2 < args.len() {
+                    match (
+                        parse_numeric_addr(args[i + 1].trim()),
+                        parse_numeric_addr(args[i + 2].trim()),
+                    ) {
+                        (Some(lo), Some(hi)) if lo <= hi => cli.watch_ranges.push((lo, hi)),
+                        _ => {
+                            eprintln!(
+                                "Error: invalid --watch-range '{} {}' (expected <lo> <hi>)",
+                                args[i + 1],
+                                args[i + 2]
+                            );
+                            std::process::exit(1);
+                        }
+                    }
+                    i += 2;
                 }
             }
             "--entry" | "-e" => {
@@ -861,6 +1065,8 @@ fn run_terminal_mode(
     time_limit: f64,
     max_instructions: i64,
     echo: bool,
+    preload: &[u8],
+    guard: &GuardState,
 ) -> u64 {
     let is_tty = unsafe { libc::isatty(libc::STDIN_FILENO) } != 0;
 
@@ -890,7 +1096,13 @@ fn run_terminal_mode(
         eprint!("[cor24-emu terminal mode \u{2014} Ctrl-] to exit]\r\n");
     }
 
-    let batch_size: u64 = if speed == 0 {
+    let batch_size: u64 = if guard.active() {
+        if speed == 0 {
+            256
+        } else {
+            (speed / 100).clamp(100, 256)
+        }
+    } else if speed == 0 {
         10_000
     } else {
         (speed / 100).max(100)
@@ -911,7 +1123,7 @@ fn run_terminal_mode(
     let mut total_instructions: u64 = 0;
     let mut batch_start = Instant::now();
     let mut prev_uart_len = 0usize;
-    let mut stdin_buf: VecDeque<u8> = VecDeque::new();
+    let mut stdin_buf: VecDeque<u8> = preload.iter().copied().collect();
     let mut read_buf = [0u8; 256];
     let stdin_fd = libc::STDIN_FILENO;
     let mut stdout = std::io::stdout();
@@ -1021,6 +1233,15 @@ fn run_terminal_mode(
             }
         }
 
+        if let Some(msg) = guard.check(emu) {
+            if is_tty {
+                eprint!("\r\n{}\r\n", msg);
+            } else {
+                eprintln!("\n{}", msg);
+            }
+            break;
+        }
+
         match result.reason {
             cor24_emulator::emulator::StopReason::StackOverflow(sp)
             | cor24_emulator::emulator::StopReason::StackUnderflow(sp) => {
@@ -1092,6 +1313,7 @@ fn load_binaries_and_patches(
         for (i, &b) in body.iter().enumerate() {
             emu.write_byte(addr + i as u32, b);
         }
+        emu.load_program_extent(addr + body.len() as u32);
         if stripped {
             println!(
                 "Loaded {} bytes from '{}' at 0x{:06X} (stripped {} byte .p24 header)",
@@ -1171,12 +1393,15 @@ fn main() {
             load_assembled(&mut emu, &result);
 
             println!("Running (Ctrl+C to stop)...\n");
+            let guard = GuardState::install(&cli, &mut emu);
             let instructions = run_with_timing(
                 &mut emu,
                 cli.speed,
                 cli.time_limit,
                 cli.max_instructions,
                 &cli.uart_input,
+                cli.quiet,
+                &guard,
             );
 
             println!(
@@ -1193,7 +1418,7 @@ fn main() {
         }
 
         "run" => {
-            let filename = match cli.file {
+            let filename = match cli.file.clone() {
                 Some(f) => f,
                 None => {
                     eprintln!("Usage: cor24-emu --run <file.s>");
@@ -1213,7 +1438,11 @@ fn main() {
             }
 
             let byte_count: usize = result.lines.iter().map(|l| l.bytes.len()).sum();
-            println!("Assembled {} bytes", byte_count);
+            if cli.quiet {
+                eprintln!("Assembled {} bytes", byte_count);
+            } else {
+                println!("Assembled {} bytes", byte_count);
+            }
 
             let mut emu = EmulatorCore::new();
             if cli.uart_never_ready {
@@ -1260,10 +1489,6 @@ fn main() {
             }
 
             if cli.terminal {
-                if !cli.uart_input.is_empty() {
-                    eprintln!("Error: --terminal and --uart-input are incompatible");
-                    return;
-                }
                 if cli.step {
                     eprintln!("Error: --terminal and --step are incompatible");
                     return;
@@ -1280,8 +1505,16 @@ fn main() {
                     cli.time_limit
                 };
 
-                let instructions =
-                    run_terminal_mode(&mut emu, speed, time_limit, cli.max_instructions, cli.echo);
+                let guard = GuardState::install(&cli, &mut emu);
+                let instructions = run_terminal_mode(
+                    &mut emu,
+                    speed,
+                    time_limit,
+                    cli.max_instructions,
+                    cli.echo,
+                    &cli.uart_input,
+                    &guard,
+                );
 
                 eprintln!("Executed {} instructions", instructions);
                 if cli.trace > 0 {
@@ -1293,7 +1526,7 @@ fn main() {
                 return;
             }
 
-            println!(
+            let run_msg = format!(
                 "Running (speed: {} IPS, time limit: {}s)...\n",
                 if cli.speed == 0 {
                     "max".to_string()
@@ -1302,26 +1535,40 @@ fn main() {
                 },
                 cli.time_limit
             );
+            if cli.quiet {
+                eprintln!("{}", run_msg);
+            } else {
+                println!("{}", run_msg);
+            }
 
             if cli.step {
                 run_step_mode(&mut emu, cli.max_instructions, &cli.uart_input);
             } else {
+                let guard = GuardState::install(&cli, &mut emu);
                 let instructions = run_with_timing(
                     &mut emu,
                     cli.speed,
                     cli.time_limit,
                     cli.max_instructions,
                     &cli.uart_input,
+                    cli.quiet,
+                    &guard,
                 );
 
-                let uart = emu.get_uart_output();
-                if !uart.is_empty() {
-                    println!("\nUART output: {}", uart);
-                }
-
-                println!("\nExecuted {} instructions", instructions);
-                if emu.is_halted() {
-                    println!("CPU halted (self-branch detected)");
+                if !cli.quiet {
+                    let uart = emu.get_uart_output();
+                    if !uart.is_empty() {
+                        println!("\nUART output: {}", uart);
+                    }
+                    println!("\nExecuted {} instructions", instructions);
+                    if emu.is_halted() {
+                        println!("CPU halted (self-branch detected)");
+                    }
+                } else {
+                    eprintln!("\nExecuted {} instructions", instructions);
+                    if emu.is_halted() {
+                        eprintln!("CPU halted (self-branch detected)");
+                    }
                 }
             }
             if cli.trace > 0 {
@@ -1419,10 +1666,6 @@ fn main() {
             }
 
             if cli.terminal {
-                if !cli.uart_input.is_empty() {
-                    eprintln!("Error: --terminal and --uart-input are incompatible");
-                    return;
-                }
                 if cli.step {
                     eprintln!("Error: --terminal and --step are incompatible");
                     return;
@@ -1439,8 +1682,16 @@ fn main() {
                     cli.time_limit
                 };
 
-                let instructions =
-                    run_terminal_mode(&mut emu, speed, time_limit, cli.max_instructions, cli.echo);
+                let guard = GuardState::install(&cli, &mut emu);
+                let instructions = run_terminal_mode(
+                    &mut emu,
+                    speed,
+                    time_limit,
+                    cli.max_instructions,
+                    cli.echo,
+                    &cli.uart_input,
+                    &guard,
+                );
 
                 eprintln!("Executed {} instructions", instructions);
                 if cli.trace > 0 {
@@ -1452,7 +1703,7 @@ fn main() {
                 return;
             }
 
-            println!(
+            let run_msg = format!(
                 "Running (speed: {} IPS, time limit: {}s)...\n",
                 if cli.speed == 0 {
                     "max".to_string()
@@ -1461,26 +1712,40 @@ fn main() {
                 },
                 cli.time_limit
             );
+            if cli.quiet {
+                eprintln!("{}", run_msg);
+            } else {
+                println!("{}", run_msg);
+            }
 
             if cli.step {
                 run_step_mode(&mut emu, cli.max_instructions, &cli.uart_input);
             } else {
+                let guard = GuardState::install(&cli, &mut emu);
                 let instructions = run_with_timing(
                     &mut emu,
                     cli.speed,
                     cli.time_limit,
                     cli.max_instructions,
                     &cli.uart_input,
+                    cli.quiet,
+                    &guard,
                 );
 
-                let uart = emu.get_uart_output();
-                if !uart.is_empty() {
-                    println!("\nUART output: {}", uart);
-                }
-
-                println!("\nExecuted {} instructions", instructions);
-                if emu.is_halted() {
-                    println!("CPU halted (self-branch detected)");
+                if !cli.quiet {
+                    let uart = emu.get_uart_output();
+                    if !uart.is_empty() {
+                        println!("\nUART output: {}", uart);
+                    }
+                    println!("\nExecuted {} instructions", instructions);
+                    if emu.is_halted() {
+                        println!("CPU halted (self-branch detected)");
+                    }
+                } else {
+                    eprintln!("\nExecuted {} instructions", instructions);
+                    if emu.is_halted() {
+                        eprintln!("CPU halted (self-branch detected)");
+                    }
                 }
             }
             if cli.trace > 0 {
