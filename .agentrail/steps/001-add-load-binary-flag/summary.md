@@ -1,0 +1,1 @@
+Implemented --load-binary <file>@<addr> flag for cor24-run CLI (REQ-013). Loads raw bytes from a file into emulator memory at specified address after host .s assembly. Supports 0x hex prefix and h suffix. Repeatable for multiple files. Updated wiki REQ-013 to DONE and added cor24-rs to AgentStatus. All 205 tests pass.
