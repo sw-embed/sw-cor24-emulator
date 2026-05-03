@@ -1,0 +1,4 @@
+# Build intermediates — only the .lgo fixture is committed.
+*.s
+*.bin
+*.lst
