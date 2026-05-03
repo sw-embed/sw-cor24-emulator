@@ -104,12 +104,34 @@ Each demo directory mirrors the original `i2cspi/` layout: chip-specific
 `.c`, the bus library (`libi2c.c`), the chip's `.h`, and a Makefile.
 
 **Toolchain.** Demos are cross-compiled with `tc24r` (the Rust-based
-COR24 C compiler at `sw-vibe-coding/tc24r`). The Makefile drives `tc24r`
-end-to-end (compile + assemble + link); the older `cc24`/`ld24`/`longlgo`
-chain that the original `i2cspi/` Makefile used is not adopted. K&R-style
-declarations in the imported source may need `tc24r`-friendly
-adjustments — that is part of importing the source, not a separate
-project.
+COR24 C compiler at `sw-vibe-coding/tc24r`, installed in
+`work/bin/tc24r` per the devgroup workflow). Pipeline:
+
+```
+*.c --tc24r--> *.s --cor24-run --assemble--> *.lgo (+ *.lst)
+```
+
+The old `cc24`/`ld24`/`longlgo` chain that the original `i2cspi/`
+Makefile used is not adopted (its binaries aren't present anyway).
+
+**Known `tc24r` constraints** (verified against the imported source —
+the import step in §8 step 0 must address each):
+
+1. No standard library headers are shipped — `#include <stdio.h>` is
+   not resolvable. Replace `printf` with direct writes to the UART
+   MMIO (`IO_UARTSTAT`/`IO_UARTDATA`); a tiny `printf`-shaped helper
+   for `"%.2f\n"` lives next to the demo. `tc24r -I <dir>` honors
+   custom include paths if a shared mini-libc emerges.
+2. K&R-style parameter declarations are rejected (`setup101(a) char
+   a; { ... }`). Convert to ANSI prototypes (`setup101(char a) { ... }`).
+3. `register` storage class is rejected. Drop the keyword.
+4. Empty loop bodies `while (t--);` are rejected (the bare `;` is not
+   accepted as a statement). Use `while (t--) {}`.
+
+There is no separate linker. Multi-`.c` demos build by concatenating
+the per-file `.s` outputs into a single `.s` before `cor24-run --assemble`,
+or by `#include`-ing helper `.c` into the top-level translation unit.
+The Makefile encodes whichever choice the demo uses.
 
 **Reproducibility without the toolchain.** A known-good `.lgo` is
 committed alongside each demo as the test fixture, so contributors and
