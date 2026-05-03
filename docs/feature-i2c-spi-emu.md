@@ -96,12 +96,42 @@ work). They double as the "how to write a new bus app" tutorial.
   an RTC time read) so the suite shows that more than one device shape
   is supported. This forces the device API to be general.
 
-### 3.3 What we will *not* do at the application layer
+### 3.3 Source layout and build
 
-No changes to `libi2c.c` / `libspi.c` / `spixchg.s` — the whole point
-of MMIO-accurate emulation is that the same source runs on FPGA and
-emulator. If a demo needs different code on emulator vs. FPGA, the
-abstraction has leaked and we should fix the emulator instead.
+Demo C source lives in the tracked tree at `examples/i2c/<chip>/`
+(and `examples/spi/<chip>/` for phase 2), parallel to `src/examples/`.
+Each demo directory mirrors the original `i2cspi/` layout: chip-specific
+`.c`, the bus library (`libi2c.c`), the chip's `.h`, and a Makefile.
+
+**Toolchain.** Demos are cross-compiled with `tc24r` (the Rust-based
+COR24 C compiler at `sw-vibe-coding/tc24r`). The Makefile drives `tc24r`
+end-to-end (compile + assemble + link); the older `cc24`/`ld24`/`longlgo`
+chain that the original `i2cspi/` Makefile used is not adopted. K&R-style
+declarations in the imported source may need `tc24r`-friendly
+adjustments — that is part of importing the source, not a separate
+project.
+
+**Reproducibility without the toolchain.** A known-good `.lgo` is
+committed alongside each demo as the test fixture, so contributors and
+CI can run the integration tests without `tc24r` installed.
+`scripts/rebuild-i2c-fixtures.sh` invokes the per-demo Makefile and
+diffs the output against the committed `.lgo`. The diff runs in a
+`tc24r`-aware CI job (skipped when `tc24r` is not on PATH). Fixture
+rebuilds are an explicit, reviewable commit — never an implicit side
+effect of `cargo build`.
+
+**First demo.** `examples/i2c/tmp101/` is imported from the existing
+user-supplied `i2cspi/tmp101/` content as the very first saga step,
+compiled by `tc24r`, fixture committed. Every later step's integration
+test loads that fixture.
+
+### 3.4 What we will *not* do at the application layer
+
+No changes to `libi2c.c` / `libspi.c` / `spixchg.s` beyond what `tc24r`
+acceptance forces — the whole point of MMIO-accurate emulation is that
+the same source runs on FPGA and emulator. If a demo needs different
+code on emulator vs. FPGA, the abstraction has leaked and we should fix
+the emulator instead.
 
 ## 4. Layer 2 — Bus MMIO emulation
 
@@ -359,6 +389,39 @@ A `docs/extending-i2c.md` file in the emulator repo that:
 
 Without this doc, the extension API isn't really a public API.
 
+### 5.6 Device handles for runtime mutation
+
+Devices need state that is observable and mutable from outside the bus
+core: set the TMP101's reported temperature, twiddle a switch on a
+virtual GPIO expander, inject a clock-stretch. The web UI in particular
+(separate repo, see §6) drives this through a slider/button.
+
+Attach returns a typed handle:
+
+```rust
+impl EmulatorCore {
+    pub fn attach_i2c_device<D: I2cDevice + 'static>(
+        &mut self,
+        dev: D,
+    ) -> I2cHandle<D>;
+}
+
+pub struct I2cHandle<D> { /* Arc<Mutex<D>> or equivalent */ }
+
+impl<D> I2cHandle<D> {
+    pub fn with<R>(&self, f: impl FnOnce(&mut D) -> R) -> R;
+}
+```
+
+Each device crate exposes its own controls — TMP101's are
+`set_temperature(f32)` and `set_resolution(Tmp101Resolution)`; an
+EEPROM's are `peek(addr)` / `poke(addr, byte)`. No downcasting from
+`dyn I2cDevice` required, no enum dispatch in the bus core.
+
+The string-keyed registry from §5.3 (`build_i2c_device(spec)`) returns
+`Box<dyn I2cDevice>` for CLI use; the typed-handle path is the
+programmatic API used by tests and the web UI. Both coexist.
+
 ## 6. EmulatorCore and CLI surface
 
 Mirror the UART API in `src/emulator.rs`:
@@ -397,7 +460,37 @@ START is one entry, a complete addressed byte-write is one entry, etc.
 Bit-level traces are useful for debugging the bus core itself but not
 day-to-day; gate them behind `--dump-i2c-bits` or similar.
 
+### 6.1 Web UI integration surface
+
+The pre-built WASM artifacts in `pages/` are frozen and not the live
+target (see CLAUDE.md). New live-demo work happens in a separate
+WASM/Yew repo that takes a `cargo` dependency on this crate. That
+repo's responsibilities:
+
+- Construct an `EmulatorCore`.
+- Call `attach_i2c_device(dev)` for whichever devices the demo
+  exposes; keep the returned `I2cHandle<D>` in app state.
+- Wire UI controls (sliders, toggles, buttons) to handle methods like
+  `Tmp101Handle::set_temperature(f32)`.
+- Render `core.format_i2c_log()` (or iterate `core.i2c_log()`) into a
+  log panel, paired with the existing UART log.
+- Provide its own `wasm-bindgen` glue. **This crate stays
+  WASM-target-agnostic** per the emulator-only-scope refactor.
+
+A tiny `examples/web-surface-smoke.rs` in this repo exercises every
+method the web UI is expected to call (attach, mutate via handle, read
+log, detach), so a breaking API change here is caught by
+`cargo test --workspace` before the downstream repo notices.
+
 ## 7. Tests
+
+**Tests are part of every saga step, not an afterthought.** Each plan
+§8 step lands its own tests in the same commit before being marked
+complete: a state-machine step adds state-machine unit tests; a device
+step adds device unit tests; a CLI/handle step adds CLI/E2E tests.
+`cargo test --workspace` is the gate for `agentrail complete --reward 1`.
+A step that introduces no logic still adds a smoke assertion (e.g.
+"reading the new MMIO address returns 1").
 
 Three layers, mirroring the architecture:
 
@@ -407,58 +500,86 @@ Three layers, mirroring the architecture:
 
 2. **Device unit tests** — call trait methods directly, assert
    responses. (TMP101: pointer-register behavior. EEPROM: address
-   wrap. RTC: multi-byte register reads.)
+   wrap. RTC: multi-byte register reads.) These also cover the typed
+   handle: `handle.with(|d| d.set_temperature(...))` then assert the
+   next read returns the new value.
 
-3. **End-to-end integration tests** — load `tmp101.lgo`, attach a
-   `Tmp101` device at `0x4A`, run for N instructions, assert the UART
-   output contains the expected `"%.2f\n"` line for the configured
-   temperature. This is the single most important test — if it passes,
-   the whole stack works (libi2c bit-banging, bus state machine,
-   device model, UART output, printf).
+3. **End-to-end integration tests** — load the committed
+   `examples/i2c/tmp101/tmp101.lgo` fixture, attach a `Tmp101` device
+   at `0x4A`, run for N instructions, assert the UART output contains
+   the expected `"%.2f\n"` line for the configured temperature. This is
+   the single most important test — if it passes, the whole stack works
+   (libi2c bit-banging, bus state machine, device model, UART output,
+   printf).
 
-The Makefile in `i2cspi/tmp101` already produces the `.lgo`; the
-emulator already has the loader. Integration test is just wiring.
+The fixture `.lgo` is committed; tests do not need `tc24r` installed.
+A separate CI job (see §3.3) optionally runs
+`scripts/rebuild-i2c-fixtures.sh` and diffs against the committed fixture.
 
 ## 8. Implementation order (I2C first)
 
-Each step is a single small commit; the suite stays green at every step.
+Each step is a single small commit; the suite stays green at every step;
+each step's commit includes the tests for the work it introduces (see
+§7). Anything that can't be tested at this step is called out in the
+step's "Done when" so the next step can pick it up.
+
+0. **Import sources and rebuild script** — copy the existing
+   `i2cspi/tmp101/` tree to `examples/i2c/tmp101/`. Make K&R adjustments
+   needed to satisfy `tc24r`. Rewrite the Makefile to drive `tc24r`.
+   Build `tmp101.lgo` once and commit it as the test fixture. Add
+   `scripts/rebuild-i2c-fixtures.sh` (skips with a clear message when
+   `tc24r` is not on PATH). Add an integration-test scaffold
+   (`tests/i2c.rs`) that loads the fixture; the load-only assertion
+   passes today and gives every later step a concrete fixture to
+   exercise. Tests do not require `tc24r`.
 
 1. **Constants and stub I/O** — add `IO_I2C_SCL`, `IO_I2C_SDA` to
-   `state.rs`; reads return 1 (idle bus), writes are no-ops. Verify
-   `tmp101.lgo` doesn't crash; it'll spin in `clkhiw()` since nothing
-   ACKs.
+   `state.rs`; reads return 1 (idle bus), writes are no-ops. Unit test
+   asserts the new MMIO addresses read 1. Smoke-test against
+   `examples/i2c/tmp101/tmp101.lgo`: it does not crash; it will spin
+   in `clkhiw()` since nothing ACKs (expected).
 
 2. **Master line state** — store `master_scl` / `master_sda` in
-   `IoState`, return them on read. `clkhiw()` returns immediately. The
-   driver runs to STOP, but no device responds, so reads are 0xFF and
-   ACK is NAK.
+   `IoState`, return them on read. Unit test asserts write-then-read
+   round-trips on both lines. `clkhiw()` returns immediately in the
+   smoke-test run; the driver still runs to STOP with no device
+   responding.
 
 3. **Bus state machine** — implement edge detection and the phase
-   enum. No devices yet; just verify the state machine recognizes
-   START, address byte, STOP from the bit stream. Unit tests at this
-   layer.
+   enum. State-machine unit tests feed `(scl, sda)` write sequences
+   and assert phase transitions plus decoded byte values. No devices
+   attached yet.
 
 4. **Device trait + LoggingDevice** — define `I2cDevice`, wire device
    lookup on address-byte complete, route events through the device.
-   Verify the logger sees the right address+RW and bytes for tmp101.
+   `LoggingDevice` is the first attached device; its tests assert it
+   sees the right address+RW and bytes for the tmp101 fixture.
 
-5. **TMP101 device** — model enough of the chip (config register,
-   temperature register, pointer register) for the demo. End-to-end
-   test asserts the printed temperature.
+5. **TMP101 device + handle** — model enough of the chip (config
+   register, temperature register, pointer register) for the demo.
+   Introduce `I2cHandle<D>` (§5.6) and `Tmp101Handle::set_temperature`.
+   Device unit tests cover handle mutation. End-to-end integration
+   test runs the fixture and asserts the printed temperature matches
+   the value set on the handle.
 
-6. **EmulatorCore + CLI plumbing** — `attach_i2c_device`,
-   `--i2c-device`, `--dump-i2c`. UI changes can come later; CLI is
-   enough to validate.
+6. **EmulatorCore + CLI plumbing** — `attach_i2c_device` returning
+   `I2cHandle<D>`, `--i2c-device`, `--dump-i2c`. CLI test asserts the
+   transaction log shape for a tmp101 run. `examples/web-surface-smoke.rs`
+   (§6.1) lands here and is exercised by `cargo test --workspace`.
 
-7. **Registry + second device** — implement `build_i2c_device` and add
-   one more device (EEPROM or DS3231) to prove the trait is general
-   enough. This is the gate before declaring the extension API "public".
+7. **Registry + second device** — implement `build_i2c_device(spec)`
+   and add one more device (EEPROM or DS3231) with its own handle and
+   tests. This is the gate before declaring the extension API "public".
 
-8. **Extension docs** — `docs/extending-i2c.md` with a worked example.
-   Without this, the API isn't really an API.
+8. **Extension docs** — `docs/extending-i2c.md` with a worked example
+   based on a minimal "echo" device. Without this, the API isn't really
+   an API.
 
-9. **Web UI surface** (optional, separable) — a panel showing the I2C
-   log alongside the UART log, plus an attach/detach control.
+9. **Web UI surface** (separable; downstream repo) — the WASM/Yew demo
+   in its own repo wires up a panel showing the I2C log, an
+   attach/detach control, and a TMP101 temperature slider against
+   `Tmp101Handle`. This crate's deliverable is just keeping
+   `examples/web-surface-smoke.rs` green.
 
 After this lands, phase 2 (SPI) follows the same shape, replacing the
 state machine with the simpler shift-register model and re-using the
