@@ -385,10 +385,28 @@ Phase 1, in priority order:
 
 | Device       | Why                                                   |
 |--------------|-------------------------------------------------------|
-| `tmp101`     | Validates the existing demo binary end-to-end         |
-| `logger`     | Bit-bucket device; records every event for tests/UI   |
-| `eeprom`     | Read/write semantics — exercises a different shape    |
+| `add1`       | Universal built-in test slave: settable address; on read returns `(last_written + 1) & 0xFF`. Smallest device that exercises full read+write+ACK paths through the bus state machine. |
+| `tmp101`     | Validates the imported tmp101 demo binary end-to-end  |
+| `logger`     | Bit-bucket sniffer; records every event for tests/UI  |
+| `eeprom`     | Read/write semantics — exercises addressed register access |
 | `ds3231`     | RTC — multi-byte register file, common in projects    |
+
+`add1` is intentionally the smallest possible device that still
+validates the bus core. Its semantics:
+
+- Configurable 7-bit address (`add1@0x50`, `add1@0x42`, etc.).
+- Configurable wrap limit (default `0x100`, i.e. 8-bit wrap; `?wrap=10`
+  for decimal wrap, etc.).
+- Stores a single `last: u8` byte.
+- On `on_write_byte(b)`: stores `last = b`, returns `Ack::Ack`.
+- On `on_read_byte()`: returns `last = (last + 1) % wrap`, then increments
+  for the next read.
+- Handle: `Add1Handle::peek() -> u8`, `Add1Handle::poke(u8)`.
+
+`add1` is the device the bus state-machine smoke tests use to confirm
+ACKed transactions and the read path work end-to-end before any
+chip-specific device exists. tmp101 follows once `add1` proves the
+trait + handle plumbing.
 
 Phase 2 / SPI:
 
@@ -572,30 +590,38 @@ step's "Done when" so the next step can pick it up.
    and assert phase transitions plus decoded byte values. No devices
    attached yet.
 
-4. **Device trait + LoggingDevice** — define `I2cDevice`, wire device
-   lookup on address-byte complete, route events through the device.
-   `LoggingDevice` is the first attached device; its tests assert it
-   sees the right address+RW and bytes for the tmp101 fixture.
+4. **Device trait + Add1 device + handle** — define `I2cDevice` plus
+   the typed-handle API (§5.6). The first concrete device is `add1`
+   (§5.4): settable 7-bit address, stores last-written byte, returns
+   `(last + 1) % wrap` on read. It's the smallest device that exercises
+   the full write/ACK/read path through the state machine. Unit tests
+   assert: write-then-read round-trips, multi-byte read sequences
+   increment correctly, `Add1Handle::poke()` mutates state observably
+   to subsequent bus reads. A logger sniffer drops out of this step's
+   smoke test entirely — `add1` is bidirectional from the start.
 
 5. **TMP101 device + handle** — model enough of the chip (config
-   register, temperature register, pointer register) for the demo.
-   Introduce `I2cHandle<D>` (§5.6) and `Tmp101Handle::set_temperature`.
-   Device unit tests cover handle mutation. End-to-end integration
-   test runs the fixture and asserts the printed temperature matches
-   the value set on the handle.
+   register, temperature register, pointer register) for the imported
+   demo. `Tmp101Handle::set_temperature` mutates the reported value.
+   End-to-end integration test runs `examples/i2c/tmp101/tmp101.lgo`
+   and asserts the printed temperature matches the value set on the
+   handle.
 
 6. **EmulatorCore + CLI plumbing** — `attach_i2c_device` returning
    `I2cHandle<D>`, `--i2c-device`, `--dump-i2c`. CLI test asserts the
    transaction log shape for a tmp101 run. `examples/web-surface-smoke.rs`
    (§6.1) lands here and is exercised by `cargo test --workspace`.
 
-7. **Registry + second device** — implement `build_i2c_device(spec)`
-   and add one more device (EEPROM or DS3231) with its own handle and
-   tests. This is the gate before declaring the extension API "public".
+7. **Registry + third device** — implement `build_i2c_device(spec)`
+   and add one more chip-specific device (EEPROM or DS3231) with its
+   own handle and tests. With `add1`, `tmp101`, and one chip-shape
+   device all working through the same trait, the extension API is
+   ready to declare "public".
 
 8. **Extension docs** — `docs/extending-i2c.md` with a worked example
-   based on a minimal "echo" device. Without this, the API isn't really
-   an API.
+   based on a minimal "echo" device (or `add1` itself, since it's
+   already a clean reference implementation). Without this, the API
+   isn't really an API.
 
 9. **Web UI surface** (separable; downstream repo) — the WASM/Yew demo
    in its own repo wires up a panel showing the I2C log, an
