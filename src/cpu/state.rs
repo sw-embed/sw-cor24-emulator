@@ -34,6 +34,11 @@ pub const INITIAL_SP: u32 = 0xFEEC00;
 pub const IO_LEDSWDAT: u32 = 0xFF0000;
 /// Interrupt enable register: bit 0 = UART RX interrupt enable
 pub const IO_INTENABLE: u32 = 0xFF0010;
+/// I2C SCL line register: write bit 0 to drive (0 = pull low, 1 = release),
+/// read bit 0 for the effective line state (open-drain wired-AND).
+pub const IO_I2C_SCL: u32 = 0xFF0020;
+/// I2C SDA line register: same semantics as `IO_I2C_SCL`.
+pub const IO_I2C_SDA: u32 = 0xFF0021;
 /// UART data register: write to transmit, read to receive (auto-acknowledges RX)
 pub const IO_UARTDATA: u32 = 0xFF0100;
 /// UART status register:
@@ -554,6 +559,9 @@ impl CpuState {
         match addr {
             IO_LEDSWDAT => self.io.switches,
             IO_INTENABLE => self.io.int_enable,
+            // Stub: idle bus, both lines released high. Master line state
+            // and slave pull-down land in the next saga step.
+            IO_I2C_SCL | IO_I2C_SDA => 1,
             IO_UARTDATA => self.io.uart_rx,
             IO_UARTSTAT => {
                 let mut status = 0u8;
@@ -596,6 +604,9 @@ impl CpuState {
             IO_INTENABLE => {
                 self.io.int_enable = value;
             }
+            // Stub: writes accepted but not yet stored. Persistence + edge
+            // detection land in the next saga step.
+            IO_I2C_SCL | IO_I2C_SDA => {}
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {
                     // Write while busy — character dropped (hardware would ignore)
@@ -1177,5 +1188,23 @@ mod tests {
         assert_eq!(cpu.io.uart_log.entries().len(), 2);
         cpu.reset();
         assert!(cpu.io.uart_log.is_empty());
+    }
+
+    #[test]
+    fn test_i2c_lines_idle_high() {
+        let cpu = CpuState::new();
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 1);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
+    }
+
+    #[test]
+    fn test_i2c_writes_are_noop() {
+        let mut cpu = CpuState::new();
+        cpu.write_byte(IO_I2C_SCL, 0);
+        cpu.write_byte(IO_I2C_SDA, 0);
+        // Stub stage: writes don't yet update line state, so reads still
+        // return idle-high. Step A.2 changes this expectation.
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 1);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
     }
 }
