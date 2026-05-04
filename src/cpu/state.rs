@@ -194,6 +194,12 @@ pub struct IoState {
     pub uart_output: String,
     /// Chronological log of all UART input and output
     pub uart_log: UartLog,
+    /// I2C SCL line as last driven by the master (true = released high).
+    /// Effective line state is `master_scl & !slave_scl_pull`; slave-pull
+    /// arrives with the device layer in step B.1.
+    pub master_scl: bool,
+    /// I2C SDA line as last driven by the master (true = released high).
+    pub master_sda: bool,
 }
 
 impl IoState {
@@ -213,6 +219,8 @@ impl IoState {
             int_enable: 0,
             uart_output: String::new(),
             uart_log: UartLog::new(),
+            master_scl: true, // both I2C lines released high at reset
+            master_sda: true,
         }
     }
 }
@@ -559,9 +567,11 @@ impl CpuState {
         match addr {
             IO_LEDSWDAT => self.io.switches,
             IO_INTENABLE => self.io.int_enable,
-            // Stub: idle bus, both lines released high. Master line state
-            // and slave pull-down land in the next saga step.
-            IO_I2C_SCL | IO_I2C_SDA => 1,
+            // Effective line state. No devices attached yet, so the
+            // wired-AND collapses to just the master driver bit. Slave
+            // pull-down arrives with the device layer in step B.1.
+            IO_I2C_SCL => self.io.master_scl as u8,
+            IO_I2C_SDA => self.io.master_sda as u8,
             IO_UARTDATA => self.io.uart_rx,
             IO_UARTSTAT => {
                 let mut status = 0u8;
@@ -604,9 +614,11 @@ impl CpuState {
             IO_INTENABLE => {
                 self.io.int_enable = value;
             }
-            // Stub: writes accepted but not yet stored. Persistence + edge
-            // detection land in the next saga step.
-            IO_I2C_SCL | IO_I2C_SDA => {}
+            // Master driver: low bit becomes the line's released/driven
+            // state (1 = released high, 0 = driven low). Edge detection
+            // and the bus state machine arrive in step A.3.
+            IO_I2C_SCL => self.io.master_scl = (value & 1) != 0,
+            IO_I2C_SDA => self.io.master_sda = (value & 1) != 0,
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {
                     // Write while busy — character dropped (hardware would ignore)
@@ -1198,13 +1210,23 @@ mod tests {
     }
 
     #[test]
-    fn test_i2c_writes_are_noop() {
+    fn test_i2c_master_line_roundtrip() {
         let mut cpu = CpuState::new();
+
         cpu.write_byte(IO_I2C_SCL, 0);
         cpu.write_byte(IO_I2C_SDA, 0);
-        // Stub stage: writes don't yet update line state, so reads still
-        // return idle-high. Step A.2 changes this expectation.
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 0);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 0);
+
+        cpu.write_byte(IO_I2C_SCL, 1);
+        cpu.write_byte(IO_I2C_SDA, 1);
         assert_eq!(cpu.read_byte(IO_I2C_SCL), 1);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
+
+        // Only the low bit matters for the line driver.
+        cpu.write_byte(IO_I2C_SCL, 0xFE);
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 0);
+        cpu.write_byte(IO_I2C_SDA, 0xFF);
         assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
     }
 }
