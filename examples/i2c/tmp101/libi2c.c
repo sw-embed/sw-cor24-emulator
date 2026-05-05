@@ -136,7 +136,10 @@ int i2cwrite(char d)
 
     i = 8;
     while (i--) {
-        *(I2CBASE + I2CSDA) = (d < 0);
+        /* Original used `(d < 0)` to grab the MSB; that depends on char
+         * being signed. tc24r treats char as unsigned, so the trick
+         * silently sent all-zero bytes. Use an explicit bit extract. */
+        *(I2CBASE + I2CSDA) = (d >> 7) & 1;
         d <<= 1;
         hclkdlay();
         clkhiw();
