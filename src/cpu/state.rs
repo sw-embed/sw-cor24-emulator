@@ -570,11 +570,11 @@ impl CpuState {
         match addr {
             IO_LEDSWDAT => self.io.switches,
             IO_INTENABLE => self.io.int_enable,
-            // Effective line state. No devices attached yet, so the
-            // wired-AND collapses to just the master driver bit. Slave
-            // pull-down arrives with the device layer in step B.1.
+            // Effective line state — the wired-AND of master drive
+            // and slave pull-down. SCL is master-only in our model
+            // (no clock stretching yet).
             IO_I2C_SCL => self.io.master_scl as u8,
-            IO_I2C_SDA => self.io.master_sda as u8,
+            IO_I2C_SDA => (self.io.master_sda && !self.io.i2c.slave_sda_pull) as u8,
             IO_UARTDATA => self.io.uart_rx,
             IO_UARTSTAT => {
                 let mut status = 0u8;
@@ -620,14 +620,16 @@ impl CpuState {
             // Master driver: low bit becomes the line's released/driven
             // state (1 = released high, 0 = driven low). After updating
             // the master bit, advance the bus state machine on the new
-            // effective lines (no slave pull yet, so effective = master).
+            // effective lines (master AND'ed with the slave pull-down).
             IO_I2C_SCL => {
                 self.io.master_scl = (value & 1) != 0;
-                self.io.i2c.step(self.io.master_scl, self.io.master_sda);
+                let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
+                self.io.i2c.step(self.io.master_scl, eff_sda);
             }
             IO_I2C_SDA => {
                 self.io.master_sda = (value & 1) != 0;
-                self.io.i2c.step(self.io.master_scl, self.io.master_sda);
+                let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
+                self.io.i2c.step(self.io.master_scl, eff_sda);
             }
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {

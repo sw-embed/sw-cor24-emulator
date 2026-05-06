@@ -1,10 +1,15 @@
 //! Integration-test scaffold for I2C demos.
 //!
 //! Saga step 001 landed the fixture-loads check; step 002 adds the
-//! stub-MMIO smoke test. Later steps attach devices and assert
+//! stub-MMIO smoke test; step 005 adds the device-trait + add1 +
+//! handle integration tests. Later steps attach TMP101 and assert
 //! deterministic UART output for a configured temperature.
 
+use cor24_emulator::peripherals::i2c::Add1Device;
 use cor24_emulator::{EmulatorCore, StopReason};
+
+const IO_I2C_SCL: u32 = 0xFF0020;
+const IO_I2C_SDA: u32 = 0xFF0021;
 
 const TMP101_LGO: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -46,6 +51,157 @@ fn tmp101_runs_with_stub_mmio() {
         result.instructions_run,
     );
     assert_eq!(result.instructions_run, 100_000);
+}
+
+/// Direct-bus harness that drives the I2C protocol through `EmulatorCore`'s
+/// MMIO without running a CPU program. The CPU+libi2c bit-banging path
+/// is exercised by the tmp101.lgo fixture once the TMP101 device lands
+/// in the next step; for now this is the canonical end-to-end shape.
+fn bus_start(emu: &mut EmulatorCore) {
+    emu.write_byte(IO_I2C_SDA, 1);
+    emu.write_byte(IO_I2C_SCL, 1);
+    emu.write_byte(IO_I2C_SDA, 0);
+    emu.write_byte(IO_I2C_SCL, 0);
+}
+
+fn bus_stop(emu: &mut EmulatorCore) {
+    emu.write_byte(IO_I2C_SDA, 0);
+    emu.write_byte(IO_I2C_SCL, 1);
+    emu.write_byte(IO_I2C_SDA, 1);
+}
+
+fn bus_write_byte(emu: &mut EmulatorCore, byte: u8) -> bool {
+    for i in (0..8).rev() {
+        emu.write_byte(IO_I2C_SDA, (byte >> i) & 1);
+        emu.write_byte(IO_I2C_SCL, 1);
+        emu.write_byte(IO_I2C_SCL, 0);
+    }
+    emu.write_byte(IO_I2C_SDA, 1);
+    emu.write_byte(IO_I2C_SCL, 1);
+    let acked = emu.read_byte(IO_I2C_SDA) == 0;
+    emu.write_byte(IO_I2C_SCL, 0);
+    acked
+}
+
+fn bus_read_byte(emu: &mut EmulatorCore, master_acks: bool) -> u8 {
+    let mut byte = 0u8;
+    for _ in 0..8 {
+        emu.write_byte(IO_I2C_SDA, 1);
+        emu.write_byte(IO_I2C_SCL, 1);
+        byte = (byte << 1) | (emu.read_byte(IO_I2C_SDA) & 1);
+        emu.write_byte(IO_I2C_SCL, 0);
+    }
+    emu.write_byte(IO_I2C_SDA, if master_acks { 0 } else { 1 });
+    emu.write_byte(IO_I2C_SCL, 1);
+    emu.write_byte(IO_I2C_SCL, 0);
+    byte
+}
+
+#[test]
+fn add1_write_then_read_increments_through_bus() {
+    // The plan-§7 layer-3 test for step 005: write addr / write byte /
+    // STOP; START / read addr / read / read / STOP. The second read
+    // must come back as last_written + 2.
+    let mut emu = EmulatorCore::new();
+    let _h = emu.attach_i2c_device(Add1Device::new(0x50, 0x100)).unwrap();
+
+    bus_start(&mut emu);
+    assert!(bus_write_byte(&mut emu, 0x50 << 1), "addr write should ACK");
+    assert!(bus_write_byte(&mut emu, 0x42), "data byte should ACK");
+    bus_stop(&mut emu);
+
+    bus_start(&mut emu);
+    assert!(bus_write_byte(&mut emu, (0x50 << 1) | 1), "addr read should ACK");
+    let r1 = bus_read_byte(&mut emu, true); // master ACKs to keep going
+    let r2 = bus_read_byte(&mut emu, false); // master NAKs to end
+    bus_stop(&mut emu);
+
+    assert_eq!(r1, 0x43, "first read = last_written + 1");
+    assert_eq!(r2, 0x44, "second read = last_written + 2");
+}
+
+#[test]
+fn handle_with_round_trip_visible_to_bus() {
+    // handle.with(|d| d.poke(...)) updates the device, and a subsequent
+    // bus read sees the new value through the same Arc<Mutex<...>>.
+    let mut emu = EmulatorCore::new();
+    let h = emu.attach_i2c_device(Add1Device::new(0x50, 0x100)).unwrap();
+    h.with(|d| d.poke(0x10));
+
+    bus_start(&mut emu);
+    assert!(bus_write_byte(&mut emu, (0x50 << 1) | 1));
+    let r = bus_read_byte(&mut emu, false);
+    bus_stop(&mut emu);
+    assert_eq!(r, 0x11, "poked value should drive next read");
+}
+
+#[test]
+fn handle_set_address_reroutes_bus() {
+    let mut emu = EmulatorCore::new();
+    let h = emu.attach_i2c_device(Add1Device::new(0x50, 0x100)).unwrap();
+
+    // Initially at 0x50: ACKs.
+    bus_start(&mut emu);
+    assert!(bus_write_byte(&mut emu, 0x50 << 1));
+    bus_stop(&mut emu);
+
+    // Move to 0x42.
+    h.set_address(0x42).unwrap();
+    assert_eq!(h.address(), 0x42);
+
+    // 0x50 now NAKs; 0x42 ACKs.
+    bus_start(&mut emu);
+    assert!(!bus_write_byte(&mut emu, 0x50 << 1), "old addr should NAK");
+    bus_stop(&mut emu);
+
+    bus_start(&mut emu);
+    assert!(bus_write_byte(&mut emu, 0x42 << 1), "new addr should ACK");
+    bus_stop(&mut emu);
+}
+
+#[test]
+fn handle_set_address_rejects_collision() {
+    use cor24_emulator::peripherals::i2c::AddressInUse;
+
+    let mut emu = EmulatorCore::new();
+    let _h1 = emu.attach_i2c_device(Add1Device::new(0x50, 0x100)).unwrap();
+    let h2 = emu.attach_i2c_device(Add1Device::new(0x42, 0x100)).unwrap();
+
+    // Move h2 onto h1's address — should reject.
+    let err = h2
+        .set_address(0x50)
+        .expect_err("collision must be rejected");
+    assert_eq!(err, AddressInUse { address: 0x50 });
+    // h2 still at 0x42.
+    assert_eq!(h2.address(), 0x42);
+}
+
+#[test]
+fn attach_rejects_duplicate_address() {
+    use cor24_emulator::peripherals::i2c::AddressInUse;
+
+    let mut emu = EmulatorCore::new();
+    let _h1 = emu.attach_i2c_device(Add1Device::new(0x50, 0x100)).unwrap();
+    let err = emu
+        .attach_i2c_device(Add1Device::new(0x50, 0x100))
+        .expect_err("duplicate attach must be rejected");
+    assert_eq!(err, AddressInUse { address: 0x50 });
+}
+
+#[test]
+fn detach_clears_routing() {
+    let mut emu = EmulatorCore::new();
+    let _h = emu.attach_i2c_device(Add1Device::new(0x50, 0x100)).unwrap();
+
+    bus_start(&mut emu);
+    assert!(bus_write_byte(&mut emu, 0x50 << 1));
+    bus_stop(&mut emu);
+
+    emu.detach_i2c_devices();
+
+    bus_start(&mut emu);
+    assert!(!bus_write_byte(&mut emu, 0x50 << 1), "after detach, NAK");
+    bus_stop(&mut emu);
 }
 
 #[test]
