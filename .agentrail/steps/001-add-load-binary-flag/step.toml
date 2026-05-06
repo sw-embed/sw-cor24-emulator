@@ -1,0 +1,9 @@
+number = 1
+slug = "add-load-binary-flag"
+status = "completed"
+description = "Implement --load-binary <file>@<addr> flag for cor24-run CLI (REQ-013 from wi..."
+role = "production"
+context_files = []
+created_at = "2026-03-26T20:33:21"
+completed_at = "2026-03-26T20:44:49"
+task_type = "rust-project-init"

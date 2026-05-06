@@ -17,7 +17,6 @@ docs/research/asld24/longlgo
 *.xlsx
 
 # Agent session artifacts
-.agentrail/
 .playwright-cli/
 
 # Scratch files

@@ -1,0 +1,1 @@
+Fixed GitHub issue #2: (1) Pre-buffer all piped stdin before emulation loop in --terminal mode, removing the 4096-byte cap that silently dropped input beyond ~4KB. (2) Added StopReason::StackOverflow detection — SP below EBR_BASE halts with diagnostic message in all CLI tools. Added set_stack_base() API for future --stack-sram. All 226 tests pass, clippy clean.
