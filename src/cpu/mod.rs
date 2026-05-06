@@ -11,12 +11,14 @@
 pub mod decode_rom;
 pub mod encode;
 pub mod executor;
+pub mod i2c_bus;
 pub mod instruction;
 pub mod state;
 
 pub use decode_rom::DECODE_ROM;
 pub use encode::*;
 pub use executor::{ExecuteResult, Executor};
+pub use i2c_bus::{I2cBusState, I2cDir, I2cPhase};
 pub use instruction::{DecodedInstruction, InstructionFormat, Opcode, REG_NAMES};
 pub use state::{
     CpuState, DecodeRom, INITIAL_SP, MEMORY_SIZE, RESET_ADDRESS, UartDirection, UartLog,

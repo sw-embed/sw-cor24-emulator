@@ -200,6 +200,8 @@ pub struct IoState {
     pub master_scl: bool,
     /// I2C SDA line as last driven by the master (true = released high).
     pub master_sda: bool,
+    /// I2C bus protocol state — phase, addressing, edge-detection memory.
+    pub i2c: crate::cpu::i2c_bus::I2cBusState,
 }
 
 impl IoState {
@@ -221,6 +223,7 @@ impl IoState {
             uart_log: UartLog::new(),
             master_scl: true, // both I2C lines released high at reset
             master_sda: true,
+            i2c: crate::cpu::i2c_bus::I2cBusState::new(),
         }
     }
 }
@@ -615,10 +618,17 @@ impl CpuState {
                 self.io.int_enable = value;
             }
             // Master driver: low bit becomes the line's released/driven
-            // state (1 = released high, 0 = driven low). Edge detection
-            // and the bus state machine arrive in step A.3.
-            IO_I2C_SCL => self.io.master_scl = (value & 1) != 0,
-            IO_I2C_SDA => self.io.master_sda = (value & 1) != 0,
+            // state (1 = released high, 0 = driven low). After updating
+            // the master bit, advance the bus state machine on the new
+            // effective lines (no slave pull yet, so effective = master).
+            IO_I2C_SCL => {
+                self.io.master_scl = (value & 1) != 0;
+                self.io.i2c.step(self.io.master_scl, self.io.master_sda);
+            }
+            IO_I2C_SDA => {
+                self.io.master_sda = (value & 1) != 0;
+                self.io.i2c.step(self.io.master_scl, self.io.master_sda);
+            }
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {
                     // Write while busy — character dropped (hardware would ignore)

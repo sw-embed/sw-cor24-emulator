@@ -450,6 +450,12 @@ impl EmulatorCore {
         self.cpu.io.uart_log.format()
     }
 
+    /// Read-only view of the I2C bus state — phase, last addressed slave,
+    /// transaction count, edge-detection memory.
+    pub fn i2c(&self) -> &crate::cpu::i2c_bus::I2cBusState {
+        &self.cpu.io.i2c
+    }
+
     pub fn send_uart_byte(&mut self, byte: u8) {
         self.cpu.uart_send_rx(byte);
     }
