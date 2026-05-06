@@ -315,8 +315,11 @@ the public surface.
 /// Abstracts a virtual I2C slave device attached to the emulator's bus.
 /// Implementations live in src/peripherals/i2c/devices/.
 pub trait I2cDevice: Send {
-    /// 7-bit I2C address this device responds to.
+    /// 7-bit I2C address this device currently responds to. Mutable —
+    /// every device must support runtime address changes (the web UI
+    /// drives this through `I2cHandle::set_address`).
     fn address(&self) -> u8;
+    fn set_address(&mut self, addr: u8);
 
     /// Optional human-readable name (used in logs and CLI).
     fn name(&self) -> &str { "i2c-device" }
@@ -340,6 +343,17 @@ pub trait I2cDevice: Send {
 
 pub enum Ack { Ack, Nak }
 ```
+
+`address` and `set_address` are **mandatory** on every device — both
+the universal `add1` test slave and chip-specific devices like
+`tmp101`. The 7-bit address space is a runtime concern (DIP switches,
+board jumpers, accidentally-conflicting bus layouts), not a
+compile-time chip property; the emulator mirrors that.
+
+When a handle calls `set_address`, the bus's address-routing table
+must be refreshed too — `EmulatorCore::attach_i2c_device` returns a
+handle whose `set_address(u8)` updates *both* the device and the
+routing table in one call. Devices never reach into the bus directly.
 
 ### 5.2 The SPI device trait (phase 2)
 
@@ -448,15 +462,32 @@ impl EmulatorCore {
 
 pub struct I2cHandle<D> { /* Arc<Mutex<D>> or equivalent */ }
 
-impl<D> I2cHandle<D> {
+impl<D: I2cDevice> I2cHandle<D> {
+    /// Mutate the device behind the handle. Bus's address-routing
+    /// table is *not* refreshed — use `set_address` for that.
     pub fn with<R>(&self, f: impl FnOnce(&mut D) -> R) -> R;
+
+    /// Read the device's current 7-bit I2C address.
+    pub fn address(&self) -> u8;
+
+    /// Move the device to a new 7-bit address. Updates both the
+    /// device's `set_address` and the bus's address routing in one
+    /// call. Returns Err if `addr` would collide with another attached
+    /// device.
+    pub fn set_address(&self, addr: u8) -> Result<(), AddressInUse>;
 }
 ```
 
-Each device crate exposes its own controls — TMP101's are
-`set_temperature(f32)` and `set_resolution(Tmp101Resolution)`; an
-EEPROM's are `peek(addr)` / `poke(addr, byte)`. No downcasting from
-`dyn I2cDevice` required, no enum dispatch in the bus core.
+Each device crate also exposes its own chip-specific controls — TMP101's
+are `set_temperature(f32)` and `set_resolution(Tmp101Resolution)`; an
+EEPROM's are `peek(addr) / poke(addr, byte)`; `add1`'s are `peek() / poke(u8)`.
+But every device — universal or chip-specific — exposes
+`address()` / `set_address()` through its handle, because the bus
+address is a runtime/board-level concern (§5.1).
+
+CLI specs include the address: `add1@0x50`, `tmp101@0x4A`, etc.
+After attach, the user (or web UI) can move the device by calling
+`handle.set_address(0x42)` — the bus's routing table tracks the move.
 
 The string-keyed registry from §5.3 (`build_i2c_device(spec)`) returns
 `Box<dyn I2cDevice>` for CLI use; the typed-handle path is the
