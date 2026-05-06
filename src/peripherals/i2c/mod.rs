@@ -7,6 +7,6 @@ pub mod handle;
 pub mod registry;
 
 pub use device::{Ack, I2cDevice};
-pub use devices::Add1Device;
+pub use devices::{Add1Device, Tmp101Device, Tmp101HandleExt, Tmp101Resolution};
 pub use handle::{AddressInUse, I2cHandle};
 pub use registry::{AddressMap, build_i2c_device};

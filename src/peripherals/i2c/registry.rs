@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use super::device::I2cDevice;
 use super::devices::add1::Add1Device;
+use super::devices::tmp101::Tmp101Device;
 
 /// Inner storage of the routing table. Public to the crate so the
 /// typed handle can mutate it on `set_address`.
@@ -111,6 +112,36 @@ pub fn build_i2c_device(spec: &str) -> Result<Box<dyn I2cDevice>, String> {
             }
             Ok(Box::new(Add1Device::new(addr, wrap)))
         }
+        "tmp101" => {
+            let mut dev = Tmp101Device::new(addr);
+            if let Some(p) = params {
+                for kv in p.split('&') {
+                    let (k, v) = kv
+                        .split_once('=')
+                        .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
+                    match k {
+                        "temp" => {
+                            let c: f32 =
+                                v.parse().map_err(|e| format!("bad temp '{v}': {e}"))?;
+                            dev.set_temperature(c);
+                        }
+                        "config" => {
+                            let c: u8 = if let Some(rest) =
+                                v.strip_prefix("0x").or_else(|| v.strip_prefix("0X"))
+                            {
+                                u8::from_str_radix(rest, 16)
+                                    .map_err(|e| format!("bad config '{v}': {e}"))?
+                            } else {
+                                v.parse().map_err(|e| format!("bad config '{v}': {e}"))?
+                            };
+                            dev.set_config(c);
+                        }
+                        _ => return Err(format!("unknown tmp101 param '{k}' in '{spec}'")),
+                    }
+                }
+            }
+            Ok(Box::new(dev))
+        }
         other => Err(format!("unknown I2C device '{other}'")),
     }
 }
@@ -161,5 +192,28 @@ mod tests {
     #[test]
     fn build_missing_at_rejected() {
         expect_err("add1", "missing '@");
+    }
+
+    #[test]
+    fn build_tmp101_default() {
+        let dev = build_i2c_device("tmp101@0x4A").unwrap();
+        assert_eq!(dev.address(), 0x4A);
+        assert_eq!(dev.name(), "tmp101");
+    }
+
+    #[test]
+    fn build_tmp101_with_temperature() {
+        let _ = build_i2c_device("tmp101@0x4A?temp=23.5").unwrap();
+    }
+
+    #[test]
+    fn build_tmp101_with_config() {
+        let _ = build_i2c_device("tmp101@0x4A?config=0x60").unwrap();
+        let _ = build_i2c_device("tmp101@0x4A?config=32").unwrap();
+    }
+
+    #[test]
+    fn build_tmp101_unknown_param_rejected() {
+        expect_err("tmp101@0x4A?wrap=10", "unknown tmp101 param");
     }
 }

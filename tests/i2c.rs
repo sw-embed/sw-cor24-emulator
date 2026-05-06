@@ -5,7 +5,7 @@
 //! handle integration tests. Later steps attach TMP101 and assert
 //! deterministic UART output for a configured temperature.
 
-use cor24_emulator::peripherals::i2c::Add1Device;
+use cor24_emulator::peripherals::i2c::{Add1Device, Tmp101Device, Tmp101HandleExt};
 use cor24_emulator::{EmulatorCore, StopReason};
 
 const IO_I2C_SCL: u32 = 0xFF0020;
@@ -203,6 +203,51 @@ fn detach_clears_routing() {
     assert!(!bus_write_byte(&mut emu, 0x50 << 1), "after detach, NAK");
     bus_stop(&mut emu);
 }
+
+#[test]
+fn tmp101_lgo_prints_configured_temperature() {
+    // Plan §7 layer-3 e2e test: load tmp101.lgo, attach a Tmp101 at
+    // 0x4A configured to 25.0°C, run, expect "25.00\n" in the UART.
+    // This exercises the entire stack — libi2c bit-banging, bus
+    // state machine, slave_sda_pull wired-AND, Tmp101 register file,
+    // resolution-aware temp_register encoding, the demo's hand-rolled
+    // printf — and is the single most important test in this saga.
+    let mut emu = load_fixture();
+    let h = emu.attach_i2c_device(Tmp101Device::new(0x4A)).unwrap();
+    h.set_temperature(25.0);
+
+    emu.resume();
+    let _ = emu.run_batch(2_000_000);
+
+    let out = emu.get_uart_output();
+    assert!(
+        out.contains("25.00\n"),
+        "expected '25.00\\n' in UART output, got {out:?}",
+    );
+}
+
+#[test]
+fn tmp101_lgo_prints_negative_temperature() {
+    let mut emu = load_fixture();
+    let h = emu.attach_i2c_device(Tmp101Device::new(0x4A)).unwrap();
+    h.set_temperature(-12.5);
+
+    emu.resume();
+    let _ = emu.run_batch(2_000_000);
+
+    let out = emu.get_uart_output();
+    assert!(
+        out.contains("-12.50\n"),
+        "expected '-12.50\\n' in UART output, got {out:?}",
+    );
+}
+
+// (Mid-run handle.set_temperature mutation is exercised at lib level
+// by handle_with_round_trip_visible_to_bus and at unit level by
+// Tmp101Device tests. End-to-end "Web UI moves the slider, the next
+// printtemp sees the new value" needs the demo's 16M-iteration delay
+// loop to elapse between reads, which is too slow for a unit test.
+// The CLI-step's web-surface-smoke fixture will pin the API shape.)
 
 #[test]
 fn tmp101_drives_bus_state_machine() {
