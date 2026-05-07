@@ -1,9 +1,50 @@
 //! Integration tests for COR24 emulator using as24-assembled .lgo files
 
-use cor24_emulator::assembler::Assembler;
 use cor24_emulator::cpu::executor::Executor;
 use cor24_emulator::cpu::state::CpuState;
 use cor24_emulator::loader::load_lgo;
+
+/// Assemble `source` via the standalone `cor24-asm` binary and return
+/// the `.lgo` text. Tests in this file no longer link the in-tree
+/// assembler — they go through the production toolchain.
+fn asm_to_lgo(source: &str) -> String {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("cor24-asm")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("cor24-asm not on PATH; required by integration tests");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let output = child
+        .wait_with_output()
+        .expect("cor24-asm wait_with_output failed");
+    if !output.status.success() {
+        panic!(
+            "cor24-asm failed: status={:?}\nstderr=\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    String::from_utf8(output.stdout).expect("cor24-asm output not UTF-8")
+}
+
+/// Load .lgo text into a fresh `CpuState` and return it. Helper for
+/// the migrated assemble_and_run pattern below.
+fn load_lgo_into_cpu(lgo: &str) -> CpuState {
+    let mut cpu = CpuState::new();
+    cpu.io.uart_tx_busy_cycles = 0; // legacy: instant TX for tests that don't poll
+    load_lgo(lgo, &mut cpu).expect("load_lgo");
+    cpu.pc = 0;
+    cpu
+}
 
 /// The set of `.s` source files this crate exposes as runnable examples.
 /// (Was previously fronted by `cor24_emulator::challenge::get_examples`,
@@ -124,13 +165,12 @@ fn test_sieve() {
 #[test]
 fn test_all_examples_assemble() {
     for (name, source) in EXAMPLES {
-        let mut assembler = Assembler::new();
-        let result = assembler.assemble(source);
+        let lgo = asm_to_lgo(source);
         assert!(
-            result.errors.is_empty(),
-            "Example '{}' failed to assemble: {:?}",
+            !lgo.is_empty() && lgo.contains('L'),
+            "Example '{}' produced empty / malformed lgo: {:?}",
             name,
-            result.errors
+            lgo,
         );
     }
 }
@@ -138,19 +178,9 @@ fn test_all_examples_assemble() {
 /// Test Fibonacci example prints correct series to UART
 #[test]
 fn test_fibonacci_example() {
-    let mut assembler = Assembler::new();
     let source = include_str!("../src/examples/assembler/fibonacci.s");
-    let result = assembler.assemble(source);
-    assert!(
-        result.errors.is_empty(),
-        "Fibonacci assembly errors: {:?}",
-        result.errors
-    );
-    let mut cpu = CpuState::new();
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
-    cpu.pc = 0;
+    let lgo = asm_to_lgo(source);
+    let mut cpu = load_lgo_into_cpu(&lgo);
     let executor = Executor::new();
     executor.run(&mut cpu, 100_000);
     assert_eq!(
@@ -162,19 +192,9 @@ fn test_fibonacci_example() {
 /// Test Multiply example prints correct result to UART
 #[test]
 fn test_multiply_example() {
-    let mut assembler = Assembler::new();
     let source = include_str!("../src/examples/assembler/multiply.s");
-    let result = assembler.assemble(source);
-    assert!(
-        result.errors.is_empty(),
-        "Multiply assembly errors: {:?}",
-        result.errors
-    );
-    let mut cpu = CpuState::new();
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
-    cpu.pc = 0;
+    let lgo = asm_to_lgo(source);
+    let mut cpu = load_lgo_into_cpu(&lgo);
     let executor = Executor::new();
     executor.run(&mut cpu, 10_000);
     assert_eq!(
@@ -186,19 +206,8 @@ fn test_multiply_example() {
 /// Helper: assemble source, run, and return CPU state.
 /// Uses instant UART TX (busy_cycles=0) for legacy tests that don't poll.
 fn assemble_and_run(source: &str, max_cycles: u64) -> CpuState {
-    let mut assembler = Assembler::new();
-    let result = assembler.assemble(source);
-    assert!(
-        result.errors.is_empty(),
-        "Assembly errors: {:?}",
-        result.errors
-    );
-    let mut cpu = CpuState::new();
-    cpu.io.uart_tx_busy_cycles = 0; // legacy: instant TX for tests that don't poll
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
-    cpu.pc = 0;
+    let lgo = asm_to_lgo(source);
+    let mut cpu = load_lgo_into_cpu(&lgo);
     let executor = Executor::new();
     executor.run(&mut cpu, max_cycles);
     cpu
@@ -213,16 +222,8 @@ fn test_all_examples_halt() {
         if non_halting.contains(name) {
             continue;
         }
-        let mut assembler = Assembler::new();
-        let result = assembler.assemble(source);
-        if !result.errors.is_empty() {
-            continue; // skip broken examples (tested elsewhere)
-        }
-        let mut cpu = CpuState::new();
-        for (addr, byte) in result.bytes.iter().enumerate() {
-            cpu.memory[addr] = *byte;
-        }
-        cpu.pc = 0;
+        let lgo = asm_to_lgo(source);
+        let mut cpu = load_lgo_into_cpu(&lgo);
         let executor = Executor::new();
         executor.run(&mut cpu, 500_000);
         assert!(
@@ -277,18 +278,11 @@ fn test_memory_access_non_adjacent() {
 /// Test that UART Hello example with TX busy polling assembles and runs correctly
 #[test]
 fn test_uart_hello_example() {
-    let mut assembler = Assembler::new();
     let source = include_str!("../src/examples/assembler/uart_hello.s");
-    let result = assembler.assemble(source);
-    assert!(
-        result.errors.is_empty(),
-        "UART Hello assembly errors: {:?}",
-        result.errors
-    );
+    let lgo = asm_to_lgo(source);
     let mut cpu = CpuState::new();
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
+    // realistic UART timing — uart_hello.s polls TX busy before each write
+    load_lgo(&lgo, &mut cpu).expect("load_lgo");
     cpu.pc = 0;
     let executor = Executor::new();
     executor.run(&mut cpu, 10_000);
@@ -338,19 +332,8 @@ fn test_stack_overflow_example() {
 #[test]
 fn test_interrupt_example() {
     let source = include_str!("../docs/examples/interrupt.s");
-    let mut assembler = Assembler::new();
-    let result = assembler.assemble(source);
-    assert!(
-        result.errors.is_empty(),
-        "Interrupt assembly errors: {:?}",
-        result.errors
-    );
-
-    let mut cpu = CpuState::new();
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
-    cpu.pc = 0;
+    let lgo = asm_to_lgo(source);
+    let mut cpu = load_lgo_into_cpu(&lgo);
     let executor = Executor::new();
 
     // Run some cycles to let main loop start counting
@@ -387,19 +370,8 @@ fn test_interrupt_example() {
 #[test]
 fn test_echo_example() {
     let source = include_str!("../src/examples/assembler/echo.s");
-    let mut assembler = Assembler::new();
-    let result = assembler.assemble(source);
-    assert!(
-        result.errors.is_empty(),
-        "Echo assembly errors: {:?}",
-        result.errors
-    );
-
-    let mut cpu = CpuState::new();
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
-    cpu.pc = 0;
+    let lgo = asm_to_lgo(source);
+    let mut cpu = load_lgo_into_cpu(&lgo);
     let executor = Executor::new();
 
     // Run to reach idle loop — prompt '?' should appear
@@ -447,15 +419,11 @@ fn test_uart_no_poll_drops_characters() {
 halt:
         bra     halt
     "#;
-    let mut assembler = Assembler::new();
-    let result = assembler.assemble(source);
-    assert!(result.errors.is_empty());
+    let lgo = asm_to_lgo(source);
     let mut cpu = CpuState::new();
     // Realistic: 10 cycles busy after each write
     cpu.io.uart_tx_busy_cycles = 10;
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
+    load_lgo(&lgo, &mut cpu).expect("load_lgo");
     cpu.pc = 0;
     let executor = Executor::new();
     executor.run(&mut cpu, 10_000);
@@ -494,14 +462,10 @@ fn test_uart_with_poll_all_characters() {
 halt:
         bra     halt
     "#;
-    let mut assembler = Assembler::new();
-    let result = assembler.assemble(source);
-    assert!(result.errors.is_empty());
+    let lgo = asm_to_lgo(source);
     let mut cpu = CpuState::new();
     cpu.io.uart_tx_busy_cycles = 10;
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
+    load_lgo(&lgo, &mut cpu).expect("load_lgo");
     cpu.pc = 0;
     let executor = Executor::new();
     executor.run(&mut cpu, 10_000);
@@ -526,15 +490,11 @@ fn test_uart_never_ready_hangs_polling_program() {
 halt:
         bra     halt
     "#;
-    let mut assembler = Assembler::new();
-    let result = assembler.assemble(source);
-    assert!(result.errors.is_empty());
+    let lgo = asm_to_lgo(source);
     let mut cpu = CpuState::new();
     cpu.io.uart_never_ready = true;
     cpu.io.uart_tx_busy = true; // start busy
-    for (addr, byte) in result.bytes.iter().enumerate() {
-        cpu.memory[addr] = *byte;
-    }
+    load_lgo(&lgo, &mut cpu).expect("load_lgo");
     cpu.pc = 0;
     let executor = Executor::new();
     executor.run(&mut cpu, 10_000);
