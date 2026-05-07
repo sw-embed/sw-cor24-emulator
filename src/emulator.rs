@@ -590,6 +590,40 @@ impl EmulatorCore {
 mod tests {
     use super::*;
 
+    /// Assemble `source` via the standalone `cor24-asm` binary and
+    /// return the `.lgo` text. Used by tests below that previously
+    /// called the in-tree `Assembler` directly. Requires `cor24-asm`
+    /// on PATH (saga decision: the in-tree assembler is going away;
+    /// production toolchain is the canonical assembler).
+    fn asm_to_lgo(source: &str) -> String {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("cor24-asm")
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("cor24-asm not on PATH; required by emulator tests");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(source.as_bytes())
+            .unwrap();
+        let output = child
+            .wait_with_output()
+            .expect("cor24-asm wait_with_output failed");
+        if !output.status.success() {
+            panic!(
+                "cor24-asm failed: status={:?}\nstderr=\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        String::from_utf8(output.stdout).expect("cor24-asm output not UTF-8")
+    }
+
     #[test]
     fn test_new_starts_paused() {
         let emu = EmulatorCore::new();
@@ -729,17 +763,11 @@ mod tests {
     /// Reproduce web UI pattern: single-step loop with UART send between ticks
     #[test]
     fn test_echo_via_single_step_loop() {
-        use crate::assembler::Assembler;
-
         let source = include_str!("examples/assembler/echo.s");
-        let mut asm = Assembler::new();
-        let result = asm.assemble(source);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let lgo = asm_to_lgo(source);
 
         let mut emu = EmulatorCore::new();
-        for (addr, &byte) in result.bytes.iter().enumerate() {
-            emu.write_byte(addr as u32, byte);
-        }
+        emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_pc(0);
 
         fn run_tick(emu: &mut EmulatorCore, steps: u32) {
@@ -786,18 +814,11 @@ mod tests {
     /// Test echo using the embedded source (same path the deprecated web UI used)
     #[test]
     fn test_echo_via_challenge_source() {
-        use crate::assembler::Assembler;
-
         let source = include_str!("examples/assembler/echo.s");
-
-        let mut asm = Assembler::new();
-        let result = asm.assemble(source);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let lgo = asm_to_lgo(source);
 
         let mut emu = EmulatorCore::new();
-        for (addr, &byte) in result.bytes.iter().enumerate() {
-            emu.write_byte(addr as u32, byte);
-        }
+        emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_pc(0);
 
         fn run_tick(emu: &mut EmulatorCore, steps: u32) {
@@ -835,18 +856,11 @@ mod tests {
     /// Verify UART log captures a full echo session with coalesced output
     #[test]
     fn test_uart_log_echo_session() {
-        use crate::assembler::Assembler;
-
         let source = include_str!("examples/assembler/echo.s");
-
-        let mut asm = Assembler::new();
-        let result = asm.assemble(source);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let lgo = asm_to_lgo(source);
 
         let mut emu = EmulatorCore::new();
-        for (addr, &byte) in result.bytes.iter().enumerate() {
-            emu.write_byte(addr as u32, byte);
-        }
+        emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_pc(0);
 
         fn run_tick(emu: &mut EmulatorCore, steps: u32) {
@@ -914,16 +928,9 @@ mod tests {
             push r0
             bra  recurse
         ";
-        let mut asm = crate::assembler::Assembler::new();
-        let result = asm.assemble(source);
-        assert!(result.errors.is_empty());
-
+        let lgo = asm_to_lgo(source);
         let mut emu = EmulatorCore::new();
-        for line in &result.lines {
-            for (i, &b) in line.bytes.iter().enumerate() {
-                emu.write_byte(line.address + i as u32, b);
-            }
-        }
+        emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_pc(0);
         emu.resume();
 
@@ -951,16 +958,9 @@ mod tests {
         halt:
             bra halt
         ";
-        let mut asm = crate::assembler::Assembler::new();
-        let result = asm.assemble(source);
-        assert!(result.errors.is_empty());
-
+        let lgo = asm_to_lgo(source);
         let mut emu = EmulatorCore::new();
-        for line in &result.lines {
-            for (i, &b) in line.bytes.iter().enumerate() {
-                emu.write_byte(line.address + i as u32, b);
-            }
-        }
+        emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_pc(0);
         emu.resume();
 
@@ -987,16 +987,9 @@ mod tests {
             push r0
             bra  recurse
         ";
-        let mut asm = crate::assembler::Assembler::new();
-        let result = asm.assemble(source);
-        assert!(result.errors.is_empty());
-
+        let lgo = asm_to_lgo(source);
         let mut emu = EmulatorCore::new();
-        for line in &result.lines {
-            for (i, &b) in line.bytes.iter().enumerate() {
-                emu.write_byte(line.address + i as u32, b);
-            }
-        }
+        emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_stack_bounds(0, 0); // disable checking
         emu.set_pc(0);
         emu.resume();
