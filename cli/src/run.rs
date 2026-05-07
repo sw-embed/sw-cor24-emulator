@@ -399,36 +399,11 @@ fn load_assembled(emu: &mut EmulatorCore, result: &AssemblyResult) {
     }
 }
 
-/// LED counter demo with spin loop delay
-const DEMO_SOURCE: &str = r#"
-; LED Counter Demo with Spin Loop Delay
-; Counts 0-255 on LEDs, loops forever
-
-        push    fp
-        mov     fp, sp
-        add     sp, -3
-
-        la      r1, -65536
-        lc      r0, 0
-        sw      r0, 0(fp)
-
-main_loop:
-        lw      r0, 0(fp)
-        sb      r0, 0(r1)
-
-        la      r2, 15000
-delay:
-        lc      r0, 1
-        sub     r2, r0
-        brt     delay
-
-        lw      r0, 0(fp)
-        lc      r2, 1
-        add     r0, r2
-        sw      r0, 0(fp)
-
-        bra     main_loop
-"#;
+/// LED counter demo, pre-built into .lgo via cor24-asm. The original
+/// `.s` source lives at cli/src/demo.s; regenerate the .lgo with:
+///
+///   cor24-asm cli/src/demo.s -o cli/src/demo.lgo
+const DEMO_LGO: &str = include_str!("demo.lgo");
 
 struct CliArgs {
     command: String,
@@ -1373,24 +1348,12 @@ fn main() {
                 cli.speed, cli.time_limit
             );
 
-            let mut asm = Assembler::new();
-            let result = asm.assemble(DEMO_SOURCE);
-            if !result.errors.is_empty() {
-                eprintln!("Assembly error: {}", result.errors.join("\n"));
-                return;
-            }
-
-            println!("Program listing:");
-            for line in &result.lines {
-                if !line.bytes.is_empty() {
-                    let bytes: String = line.bytes.iter().map(|b| format!("{:02X} ", b)).collect();
-                    println!("{:04X}: {:14} {}", line.address, bytes.trim(), line.source);
-                }
-            }
-            println!();
-
             let mut emu = EmulatorCore::new();
-            load_assembled(&mut emu, &result);
+            let bytes = emu.load_lgo(DEMO_LGO, None).unwrap_or_else(|e| {
+                eprintln!("Demo .lgo failed to load (regenerate via cor24-asm cli/src/demo.s -o cli/src/demo.lgo): {e}");
+                std::process::exit(1);
+            });
+            println!("Loaded {} bytes from embedded demo.lgo\n", bytes);
 
             println!("Running (Ctrl+C to stop)...\n");
             let guard = GuardState::install(&cli, &mut emu);
