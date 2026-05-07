@@ -110,3 +110,50 @@ Library exports to remove (`src/lib.rs:21-22`):
   are gone; their callers are migrated.
 - `cargo clippy -- -D warnings` clean.
 - No `wasm_bindgen`/`web_sys`/`js_sys` imports anywhere.
+
+## Closing section (after step 009)
+
+| Gate                                          | Result                                                                      |
+|-----------------------------------------------|-----------------------------------------------------------------------------|
+| `cargo test --workspace`                      | 203 pass, 0 fail (lib 166 + integration 21 + cli unit 11 + cli integration 2 + isa 3) |
+| `cargo clippy --workspace --all-targets -- -D warnings` | clean                                                              |
+| `cor24-emu --help`                            | advertises `--lgo`, `--demo`, `--load-binary`; no `--run` / `--assemble`     |
+| `cor24-emu --run prog.s` / `--assemble`       | exits 2 with migration message pointing at `cor24-asm`                      |
+| Active references to `cor24_emulator::assembler` | zero (only this baseline doc retains historical mentions)                |
+| Active references to `crate::assembler`       | zero                                                                        |
+| `wasm_bindgen` / `web_sys` / `js_sys` imports | zero                                                                        |
+| `src/assembler.rs`                            | deleted (1512 lines)                                                        |
+| `src/challenge.rs`                            | deleted (514 lines)                                                         |
+| `cli/tests/removed_flags.rs`                  | new — pins the `--run`/`--assemble` rejection contract                      |
+| `examples/i2c/tmp101/Makefile`                | not present on this branch (lands with `feat/i2c-spi-emu`); when that branch merges to `dev`, its `--assemble` invocation must also be migrated |
+
+### Test-count delta
+
+| Target                       | Baseline | Final | Delta |
+|------------------------------|---------:|------:|------:|
+| `cor24-emulator` lib         |      207 |   166 |   −41 |
+| `tests/integration_tests.rs` |       21 |    21 |     0 |
+| `cor24-cli` unit             |       12 |    11 |    −1 |
+| `cor24-cli` integration      |        0 |     2 |    +2 |
+| `cor24-isa` lib              |        3 |     3 |     0 |
+| **Total**                    |  **243** |**203**| **−40** |
+
+The −41 in lib comes from the assembler module's own unit tests
+(`assembler::tests::test_*`) which went away with the file. The −1
+in cli unit is the deleted `test_assemble_at_base_and_load`. The
++2 in cli integration is the new `removed_flags.rs` smoke tests.
+Net: every removed test was either testing the deleted module or
+testing a deleted flag. Zero regressions in surviving tests.
+
+### Commits in this saga
+
+```
+1f4252b refactor(cli): remove --run and --assemble; reject with migration message
+b6a90cf docs: migrate --run / --assemble examples to cor24-asm + --lgo
+5b4cf39 test(integration): migrate Assembler users to cor24-asm
+426487f test(emulator): migrate cfg(test) Assembler users to cor24-asm
+000e894 (older) ... (saga steps before this one)
+7ddb3a5 refactor: delete src/assembler.rs and lib.rs re-exports
+```
+
+Ready for relay via `dg-relay dcemu sw-cor24-emulator pr/remove-internal-assembler`.

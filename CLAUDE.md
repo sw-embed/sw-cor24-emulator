@@ -218,7 +218,7 @@ cargo clippy --workspace
 
 The CLI binaries land in `target/debug/` (or `target/release/`):
 
-- `cor24-emu` — assembler + emulator runner. `--demo`, `--run <file.s>`, `--assemble in.s out.bin out.lst`, `--terminal`, `--dump-uart`, `--uart-file <path>`, `--speed`, `--time`. See `docs/cli-emulator-guide.md`.
+- `cor24-emu` — emulator runner (runtime only; assembly is `cor24-asm`'s job, in the `sw-cor24-x-assembler` crate). `--demo`, `--lgo <file.lgo>`, `--load-binary <f>@<addr>`, `--terminal`, `--dump-uart`, `--uart-file <path>`, `--speed`, `--time`. See `docs/cli-tools.md`.
 - `cor24-dbg` — GDB-like CLI debugger. Loads `.lgo` files, `--entry <addr>`. See `docs/cli-tools.md`.
 
 Demo runners are in `scripts/demo-cli-*.sh` (hello-world, count-down, led-blink, sieve).
