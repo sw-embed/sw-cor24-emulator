@@ -19,7 +19,7 @@ Echo is a terminal-level concern, not an application concern. Real serial termin
 ## Specification
 
 ```
-cor24-run --run <file.s> --terminal --echo
+cor24-asm <file.s> -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo --terminal --echo
 ```
 
 When `--echo` is enabled:

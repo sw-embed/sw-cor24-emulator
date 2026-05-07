@@ -24,14 +24,14 @@ The user can't distinguish these programmatically (e.g., in CI scripts).
 Scan the accumulated UART output for the string `PANIC:`. If found, exit with code 3 instead of 0 on halt. This requires no protocol changes — tml24c already prints `PANIC:` prefixed messages before halting.
 
 ```bash
-cor24-run --run prog.s --terminal --speed 0 -n 500000000
+cor24-asm prog.s -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo --terminal --speed 0 -n 500000000
 echo $?  # 0 = clean, 1 = instruction limit, 2 = time, 3 = PANIC
 ```
 
 ## Proposed: Watchdog Mode
 
 ```
-cor24-run --run prog.s --watchdog 5
+cor24-asm prog.s -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo --watchdog 5
 ```
 
 If the CPU produces no new UART output for N seconds, assume it's stuck in an infinite loop (not a halt — halts are detected immediately). Print `[watchdog timeout: no output for 5s]` and exit with code 4.

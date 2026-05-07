@@ -1,0 +1,1 @@
+Support the COR24 toolchain ecosystem by implementing features requested by dependent projects. Phase 1: Add --load-binary flag to cor24-run for loading guest binaries (p24, forth, etc) into emulator memory at a specified address (REQ-013). Phase 2: Check wiki for additional requests and implement. Phase 3: Update wiki status and verify end-to-end with dependent projects.

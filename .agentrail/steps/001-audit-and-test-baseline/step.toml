@@ -1,0 +1,13 @@
+number = 1
+slug = "audit-and-test-baseline"
+status = "completed"
+description = """
+Step 001 — pre-removal baseline.
+
+Capture the snapshot we will compare agai..."""
+role = "production"
+context_files = []
+created_at = "2026-05-06T22:34:48"
+completed_at = "2026-05-06T22:46:01"
+task_type = "rust-feature"
+commits = ["3e84b8372e36d2d2f3c298e65503337ac4f324b9"]

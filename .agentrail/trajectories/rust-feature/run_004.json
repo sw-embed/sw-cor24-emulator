@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 4,
+    "step": "emulator-tests-migration"
+  },
+  "action": "Added asm_to_lgo helper in src/emulator.rs#[cfg(test)] mod tests; replaced Assembler::new()+asm.assemble()+for-line-bytes-write loop in 6 tests (test_echo_via_single_step_loop, test_echo_via_challenge_source, test_uart_log_echo_session, test_stack_overflow_detected, test_stack_underflow_detected, test_stack_bounds_disabled).",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-06T22:59:39"
+}

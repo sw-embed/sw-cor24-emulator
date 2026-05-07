@@ -1,0 +1,14 @@
+number = 9
+slug = "final-sweep"
+status = "completed"
+description = """
+Step 009 — final sweep + saga sign-off.
+
+What to verify:
+1. git grep -nE "u..."""
+role = "legacy"
+context_files = []
+created_at = "2026-05-06T23:20:11"
+completed_at = "2026-05-06T23:21:49"
+task_type = "rust-feature"
+commits = ["e2299f5492169e3452999d3247f131b46e4887ac"]

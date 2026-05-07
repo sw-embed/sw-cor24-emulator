@@ -21,7 +21,7 @@ Any COR24 program that does interactive I/O (REPL, monitor, game, echo server) n
 ### CLI interface
 
 ```
-cor24-run --run <file.s> --terminal [options]
+cor24-asm <file.s> -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo --terminal [options]
 ```
 
 Existing flags that should compose with `--terminal`:
@@ -91,16 +91,16 @@ This is the same FIFO-drain pattern already used for `--uart-input`, but with st
 
 ```bash
 # Interactive Lisp REPL
-cor24-run --run build/repl.s --terminal
+cor24-asm build/repl.s -o build/repl.lgo && cor24-emu --lgo build/repl.lgo --terminal
 
 # With explicit speed
-cor24-run --run build/repl.s --terminal --speed 500000
+cor24-asm build/repl.s -o build/repl.lgo && cor24-emu --lgo build/repl.lgo --terminal --speed 500000
 
 # Dump state after exit
-cor24-run --run build/repl.s --terminal --dump
+cor24-asm build/repl.s -o build/repl.lgo && cor24-emu --lgo build/repl.lgo --terminal --dump
 
 # With entry point
-cor24-run --run build/repl.s --terminal --entry main
+cor24-asm build/repl.s -o build/repl.lgo && cor24-emu --lgo build/repl.lgo --terminal --entry main
 ```
 
 What the user sees:
@@ -187,19 +187,19 @@ What the user sees:
 
 3. **Ctrl-C handling**: With `ISIG` off, Ctrl-C (0x03) goes to the UART as a byte, not as a signal. The user uses Ctrl-] to exit instead. Document this clearly in the banner.
 
-4. **Pipe detection**: If stdin is not a TTY (e.g., piped input), skip raw mode setup and just read stdin as-is. When stdin reaches EOF, let the emulator continue running (it may still produce output) until the time/instruction limit. This makes `echo "(+ 1 2)" | cor24-run --run repl.s --terminal` work too.
+4. **Pipe detection**: If stdin is not a TTY (e.g., piped input), skip raw mode setup and just read stdin as-is. When stdin reaches EOF, let the emulator continue running (it may still produce output) until the time/instruction limit. This makes `echo "(+ 1 2)" | cor24-asm repl.s -o /tmp/repl.lgo && cor24-emu --lgo /tmp/repl.lgo --terminal` work too.
 
 5. **Terminal restoration on panic**: The `TermiosGuard` drop impl must restore the terminal. Also register a panic hook that restores termios, or the user's terminal will be stuck in raw mode.
 
 ### Testing
 
-1. **Smoke test**: `cor24-run --run <echo.s> --terminal` where echo.s reads a byte and writes it back. Type characters, verify they echo.
+1. **Smoke test**: assembling echo.s with `cor24-asm` then `cor24-emu --lgo echo.lgo --terminal` where echo.s reads a byte and writes it back. Type characters, verify they echo.
 
-2. **REPL test**: `cor24-run --run repl.s --terminal` — define a function, call it, verify output.
+2. **REPL test**: `cor24-asm repl.s -o /tmp/repl.lgo && cor24-emu --lgo /tmp/repl.lgo --terminal` — define a function, call it, verify output.
 
 3. **Ctrl-] exit**: Verify clean exit and terminal restoration.
 
-4. **Pipe mode**: `echo "(+ 1 2)" | cor24-run --run repl.s --terminal` — verify output, clean exit on EOF.
+4. **Pipe mode**: `echo "(+ 1 2)" | cor24-asm repl.s -o /tmp/repl.lgo && cor24-emu --lgo /tmp/repl.lgo --terminal` — verify output, clean exit on EOF.
 
 5. **CPU halt**: Run a program that halts. Verify `[CPU halted]` message and clean exit.
 

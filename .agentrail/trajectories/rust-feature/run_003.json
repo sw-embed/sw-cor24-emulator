@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 3,
+    "step": "demo-mode-as-lgo"
+  },
+  "action": "Wrote cli/src/demo.s with regen-via-cor24-asm comment header; ran cor24-asm cli/src/demo.s -o cli/src/demo.lgo to produce the canonical .lgo; replaced const DEMO_SOURCE in cli/src/run.rs with const DEMO_LGO = include_str!(\"demo.lgo\"); rewrote the demo command branch to load_lgo + drop the runtime program listing.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-06T22:56:29"
+}

@@ -616,11 +616,9 @@ impl CpuState {
                     // cycles=0 means instant ready (legacy/test mode)
                 }
             }
-            IO_UARTSTAT => {
-                // Writing to status can clear overflow flag
-                if value & 0x04 != 0 {
-                    self.io.uart_rx_overflow = false;
-                }
+            IO_UARTSTAT if value & 0x04 != 0 => {
+                // Writing bit 2 of status clears the RX overflow flag.
+                self.io.uart_rx_overflow = false;
             }
             _ => {} // Ignore unknown I/O address
         }
