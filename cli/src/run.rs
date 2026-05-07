@@ -1522,7 +1522,7 @@ mod tests {
 
     #[test]
     fn test_raw_binary_no_strip() {
-        let data = vec![0x44, 0x05, 0x5A];
+        let data: &[u8] = &[0x44, 0x05, 0x5A];
         assert!(!(data.len() >= P24_HEADER_SIZE && data[..4] == P24_MAGIC));
     }
 
@@ -1548,7 +1548,7 @@ mod tests {
     #[test]
     fn test_load_raw_binary_file() {
         let tmp = std::env::temp_dir().join("cor24_emu_test_raw.bin");
-        fs::write(&tmp, &[0x44, 0x05, 0x5A]).unwrap();
+        fs::write(&tmp, [0x44u8, 0x05, 0x5A]).unwrap();
         let mut emu = EmulatorCore::new();
         load_binaries_and_patches(
             &mut emu,
