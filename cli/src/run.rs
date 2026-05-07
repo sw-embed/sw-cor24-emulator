@@ -1,12 +1,15 @@
-//! cor24-emu: COR24 assembler and emulator CLI
+//! cor24-emu: COR24 emulator CLI
 //!
 //! Usage:
 //!   cor24-emu --demo                              Run built-in LED demo
 //!   cor24-emu --demo --speed 50000 --time 10      Run at 50k IPS for 10 seconds
-//!   cor24-emu --run <file.s>                      Assemble and run
-//!   cor24-emu --assemble <in.s> <out.bin> <out.lst>  Assemble to binary + listing
+//!   cor24-emu --lgo <file.lgo>                    Run a pre-built .lgo
+//!   cor24-emu --load-binary <f>@<addr>            Run a raw-binary image at addr
+//!
+//! Assembly (`.s` -> `.lgo` / `.bin` / `.lst`) is the job of `cor24-asm`
+//! from the `sw-cor24-x-assembler` crate. This binary is a pure
+//! runtime consumer.
 
-use cor24_emulator::assembler::{Assembler, AssemblyResult};
 use cor24_emulator::emulator::EmulatorCore;
 use std::collections::VecDeque;
 use std::env;
@@ -39,12 +42,11 @@ fn print_version() {
 }
 
 fn print_short_help() {
-    println!("cor24-emu: COR24 assembler and emulator\n");
+    println!("cor24-emu: COR24 emulator (runtime only — use cor24-asm to assemble)\n");
     println!("Usage:");
-    println!("  cor24-emu --demo [options]        Run built-in LED demo");
-    println!("  cor24-emu --run <file.s> [opts]   Assemble and run");
-    println!("  cor24-emu --load-binary <f>@<a> --entry <a>  Run pre-assembled binaries");
-    println!("  cor24-emu --assemble <in.s> <out.bin> <out.lst>");
+    println!("  cor24-emu --demo [options]                    Run built-in LED demo");
+    println!("  cor24-emu --lgo <file.lgo> [opts]             Run a pre-built .lgo");
+    println!("  cor24-emu --load-binary <f>@<a> --entry <a>   Run a raw-binary image");
     println!();
     println!("Options:");
     println!("  -h                     Short help (this message)");
@@ -62,7 +64,7 @@ fn print_short_help() {
     println!("  --uart-input, -u <str> Send characters to UART RX (supports \\n, \\x21)");
     println!("  --uart-file <path>     Read file contents into UART RX buffer (appends 0x04 EOF)");
     println!("  --quiet, -q            UART TX as plain text on stdout; logs to stderr");
-    println!("  --entry, -e <label|addr> Set entry point (label name or numeric address)");
+    println!("  --entry, -e <label|addr> Set entry point (numeric address only)");
     println!("  --dump                 Dump CPU state, I/O, and non-zero memory after halt");
     println!("  --dump-uart            Show UART transaction log (chronological IN/OUT)");
     println!("  --trace <N>            Dump last N instructions on halt/timeout (default: 50)");
@@ -71,7 +73,6 @@ fn print_short_help() {
     println!("  --echo                 Local echo in terminal mode (for programs that don't echo)");
     println!("  --load-binary <file>@<addr>  Load raw bytes into memory at address");
     println!("  --patch <addr>=<value> Write 24-bit value to memory (repeatable)");
-    println!("  --base-addr <addr>     Base address for assembly (default: 0)");
     println!("  --stack-kilobytes <3|8>  EBR stack size (default: 3, max: 8)");
     println!("  --switch <on|off>      Set button S2 state (default: off/released)");
     println!("  --uart-never-ready     UART TX stays busy forever (test polling)");
@@ -84,10 +85,10 @@ fn print_short_help() {
     println!();
     println!("Examples:");
     println!("  cor24-emu --demo --speed 100000 --time 10");
-    println!("  cor24-emu --run prog.s --dump --speed 0");
-    println!("  cor24-emu --run echo.s -u 'abc!' --speed 0 --dump --dump-uart");
-    println!("  cor24-emu --run repl.s --terminal --echo --speed 0");
-    println!("  cor24-emu --run pvm.s --load-binary hello.p24@0x010000 --terminal");
+    println!("  cor24-asm prog.s -o prog.lgo && cor24-emu --lgo prog.lgo --dump --speed 0");
+    println!("  cor24-emu --lgo echo.lgo -u 'abc!' --speed 0 --dump --dump-uart");
+    println!("  cor24-emu --lgo repl.lgo --terminal --echo --speed 0");
+    println!("  cor24-emu --lgo pvm.lgo --load-binary hello.p24@0x010000 --terminal");
     println!(
         "  cor24-emu --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 --entry 0 --terminal"
     );
@@ -115,7 +116,7 @@ fn print_long_help() {
     println!("  Ctrl-] exits. Use --echo for programs that don't echo typed characters.");
     println!("  Defaults to max speed and 1-hour time limit.");
     println!(
-        "  Pipe-aware: works with piped input (echo '(+ 1 2)' | cor24-emu --run repl.s --terminal)."
+        "  Pipe-aware: works with piped input (echo '(+ 1 2)' | cor24-emu --lgo repl.lgo --terminal)."
     );
     println!();
     println!("UART I/O Registers:");
@@ -123,23 +124,23 @@ fn print_long_help() {
     println!("  FF0101  Status: bit 0 = RX ready, bit 1 = CTS, bit 7 = TX busy");
     println!();
     println!("AI Agent Guidance:");
-    println!("  This tool assembles COR24 assembly (.s files) and runs them on an emulator.");
-    println!("  Assembly syntax follows the reference as24 assembler: labels on their own line,");
-    println!("  hex literals use FFh suffix (not 0xFF prefix), la for 24-bit immediates.");
+    println!("  This tool runs pre-built COR24 programs in an emulator. Assembly source");
+    println!("  (.s files) goes through `cor24-asm` first to produce .lgo / .bin / .lst.");
+    println!("  Use cor24-asm <input.s> -o <out.lgo> then cor24-emu --lgo <out.lgo>.");
     println!("  The --dump flag is invaluable for debugging — it shows registers, stack, SRAM,");
     println!("  and I/O state. Use --trace N to see the last N executed instructions.");
     println!("  For interactive programs, use --terminal (optionally with --echo).");
     println!("  Programs that need deep recursion should use --stack-kilobytes 8.");
     println!("  Use --load-binary <file>@<addr> to load guest binaries (p24, forth, etc)");
-    println!("  into memory after the host program is assembled. Repeatable for multiple files.");
+    println!("  into memory at fixed addresses. Repeatable for multiple files.");
     println!("  Files with .p24 magic header (P24\\0) are auto-detected: the 18-byte header");
     println!("  is stripped and only the code+data body is loaded.");
     println!();
     println!("  Use --patch <addr>=<value> to write 24-bit values to memory after loading.");
     println!("  Useful for setting VM state (e.g., guest_code_base). Repeatable.");
     println!();
-    println!("  Binary-only mode: use --load-binary + --entry <addr> without --run to skip");
-    println!("  assembly entirely. Load pre-assembled COR24 binaries for instant startup:");
+    println!("  Binary-only mode: use --load-binary + --entry <addr> with no --lgo to run");
+    println!("  pre-assembled COR24 binaries directly:");
     println!("    cor24-emu --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 \\");
     println!("              --patch 0x09D7=0x010000 --entry 0 --terminal");
 }
@@ -380,25 +381,6 @@ fn run_with_timing(
     total_instructions
 }
 
-/// Load assembled bytes into emulator at their correct addresses
-fn load_assembled(emu: &mut EmulatorCore, result: &AssemblyResult) {
-    let mut end: u32 = 0;
-    for line in &result.lines {
-        if !line.bytes.is_empty() {
-            for (i, &b) in line.bytes.iter().enumerate() {
-                emu.write_byte(line.address + i as u32, b);
-            }
-            let line_end = line.address + line.bytes.len() as u32;
-            if line_end > end {
-                end = line_end;
-            }
-        }
-    }
-    if end > 0 {
-        emu.load_program_extent(end);
-    }
-}
-
 /// LED counter demo, pre-built into .lgo via cor24-asm. The original
 /// `.s` source lives at cli/src/demo.s; regenerate the .lgo with:
 ///
@@ -423,7 +405,6 @@ struct CliArgs {
     stack_kb: u32,
     load_binaries: Vec<(String, u32)>,
     patches: Vec<(u32, u32)>,
-    base_addr: u32,
     switch_pressed: bool,
     quiet: bool,
     guard_jumps: bool,
@@ -463,7 +444,6 @@ fn parse_args() -> CliArgs {
         stack_kb: 3,
         load_binaries: Vec::new(),
         patches: Vec::new(),
-        base_addr: 0,
         switch_pressed: false,
         quiet: false,
         guard_jumps: false,
@@ -476,15 +456,15 @@ fn parse_args() -> CliArgs {
     while i < args.len() {
         match args[i].as_str() {
             "--demo" => cli.command = "demo".to_string(),
-            "--run" => {
-                cli.command = "run".to_string();
-                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                    cli.file = Some(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--assemble" => {
-                cli.command = "assemble".to_string();
+            "--run" | "--assemble" => {
+                eprintln!(
+                    "Error: '{}' was removed when the in-tree assembler was split out. Use 'cor24-asm <input.s>' to produce a .lgo, then 'cor24-emu --lgo <file.lgo>'.",
+                    args[i]
+                );
+                eprintln!(
+                    "  cor24-asm:  https://github.com/softwarewrighter/sw-cor24-x-assembler"
+                );
+                std::process::exit(2);
             }
             "--speed" | "-s" => {
                 if i + 1 < args.len() {
@@ -686,21 +666,6 @@ fn parse_args() -> CliArgs {
                         None => {
                             eprintln!(
                                 "Error: --load-binary requires <file>@<addr> format (e.g., hello.p24@0x010000)"
-                            );
-                            std::process::exit(1);
-                        }
-                    }
-                    i += 1;
-                }
-            }
-            "--base-addr" => {
-                if i + 1 < args.len() {
-                    match parse_numeric_addr(args[i + 1].trim()) {
-                        Some(a) => cli.base_addr = a,
-                        None => {
-                            eprintln!(
-                                "Error: invalid --base-addr '{}' (expected address, e.g., 0x010000)",
-                                args[i + 1]
                             );
                             std::process::exit(1);
                         }
@@ -1334,7 +1299,7 @@ fn main() {
 
     let mut cli = parse_args();
 
-    // Binary-only mode: --load-binary without --run
+    // Binary-only mode: --load-binary without --lgo / --demo
     if cli.command.is_empty() && !cli.load_binaries.is_empty() {
         cli.command = "binary".to_string();
     }
@@ -1378,217 +1343,6 @@ fn main() {
             if cli.dump {
                 print_dump(&emu, cli.dump_uart);
             }
-        }
-
-        "run" => {
-            let filename = match cli.file.clone() {
-                Some(f) => f,
-                None => {
-                    eprintln!("Usage: cor24-emu --run <file.s>");
-                    return;
-                }
-            };
-
-            let source = fs::read_to_string(&filename).expect("Cannot read file");
-            let mut asm = Assembler::new();
-            let result = asm.assemble(&source);
-            if !result.errors.is_empty() {
-                eprintln!("Assembly errors:");
-                for err in &result.errors {
-                    eprintln!("  {}", err);
-                }
-                return;
-            }
-
-            let byte_count: usize = result.lines.iter().map(|l| l.bytes.len()).sum();
-            if cli.quiet {
-                eprintln!("Assembled {} bytes", byte_count);
-            } else {
-                println!("Assembled {} bytes", byte_count);
-            }
-
-            let mut emu = EmulatorCore::new();
-            if cli.uart_never_ready {
-                emu.set_uart_never_ready(true);
-            }
-            if cli.switch_pressed {
-                emu.set_button_pressed(true);
-            }
-            if cli.stack_kb == 8 {
-                emu.set_reg(4, 0xFF0000);
-                emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
-            }
-            load_assembled(&mut emu, &result);
-
-            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches);
-
-            if let Some(entry_str) = &cli.entry {
-                if let Some(addr) = parse_numeric_addr(entry_str) {
-                    emu.set_pc(addr);
-                    println!("Entry point: 0x{:06X}", addr);
-                } else {
-                    let mut found = false;
-                    for line in &result.lines {
-                        let src = line.source.trim();
-                        if src.ends_with(':') && src.trim_end_matches(':') == entry_str.as_str() {
-                            emu.set_pc(line.address);
-                            println!("Entry point: {} @ 0x{:06X}", entry_str, line.address);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
-                        eprintln!(
-                            "Warning: entry point '{}' not found, starting at 0x000000",
-                            entry_str
-                        );
-                    }
-                }
-            }
-
-            if cli.echo && !cli.terminal {
-                eprintln!("Error: --echo requires --terminal");
-                return;
-            }
-
-            if cli.terminal {
-                if cli.step {
-                    eprintln!("Error: --terminal and --step are incompatible");
-                    return;
-                }
-
-                let speed = if cli.speed == DEFAULT_SPEED {
-                    0
-                } else {
-                    cli.speed
-                };
-                let time_limit = if cli.time_limit == DEFAULT_TIME_LIMIT {
-                    0.0
-                } else {
-                    cli.time_limit
-                };
-
-                let guard = GuardState::install(&cli, &mut emu);
-                let instructions = run_terminal_mode(
-                    &mut emu,
-                    speed,
-                    time_limit,
-                    cli.max_instructions,
-                    cli.echo,
-                    &cli.uart_input,
-                    &guard,
-                );
-
-                eprintln!("Executed {} instructions", instructions);
-                if cli.trace > 0 {
-                    print!("{}", emu.trace().format_last(cli.trace));
-                }
-                if cli.dump {
-                    print_dump(&emu, cli.dump_uart);
-                }
-                return;
-            }
-
-            let run_msg = format!(
-                "Running (speed: {} IPS, time limit: {}s)...\n",
-                if cli.speed == 0 {
-                    "max".to_string()
-                } else {
-                    cli.speed.to_string()
-                },
-                cli.time_limit
-            );
-            if cli.quiet {
-                eprintln!("{}", run_msg);
-            } else {
-                println!("{}", run_msg);
-            }
-
-            if cli.step {
-                run_step_mode(&mut emu, cli.max_instructions, &cli.uart_input);
-            } else {
-                let guard = GuardState::install(&cli, &mut emu);
-                let instructions = run_with_timing(
-                    &mut emu,
-                    cli.speed,
-                    cli.time_limit,
-                    cli.max_instructions,
-                    &cli.uart_input,
-                    cli.quiet,
-                    &guard,
-                );
-
-                if !cli.quiet {
-                    let uart = emu.get_uart_output();
-                    if !uart.is_empty() {
-                        println!("\nUART output: {}", uart);
-                    }
-                    println!("\nExecuted {} instructions", instructions);
-                    if emu.is_halted() {
-                        println!("CPU halted (self-branch detected)");
-                    }
-                } else {
-                    eprintln!("\nExecuted {} instructions", instructions);
-                    if emu.is_halted() {
-                        eprintln!("CPU halted (self-branch detected)");
-                    }
-                }
-            }
-            if cli.trace > 0 {
-                print!("{}", emu.trace().format_last(cli.trace));
-            }
-            if cli.dump {
-                print_dump(&emu, cli.dump_uart);
-            }
-        }
-
-        "assemble" => {
-            if args.len() < 5 {
-                eprintln!("Usage: cor24-emu --assemble <in.s> <out.bin> <out.lst>");
-                return;
-            }
-            let source = fs::read_to_string(&args[2]).expect("Cannot read file");
-            let mut asm = Assembler::new();
-            let result = asm.assemble_at(&source, cli.base_addr);
-            if !result.errors.is_empty() {
-                eprintln!("Assembly error: {}", result.errors.join("\n"));
-                return;
-            }
-
-            let machine_code: Vec<u8> = result
-                .lines
-                .iter()
-                .flat_map(|line| line.bytes.iter().copied())
-                .collect();
-
-            fs::write(&args[3], &machine_code).expect("Cannot write .bin");
-            let mut lst_file = fs::File::create(&args[4]).expect("Cannot write .lst");
-            for line in &result.lines {
-                if !line.bytes.is_empty() {
-                    let bytes: String = line.bytes.iter().map(|b| format!("{:02X} ", b)).collect();
-                    writeln!(
-                        lst_file,
-                        "{:04X}: {:14} {}",
-                        line.address,
-                        bytes.trim(),
-                        line.source
-                    )
-                    .ok();
-                } else if !line.source.is_empty() {
-                    writeln!(lst_file, "                    {}", line.source).ok();
-                }
-            }
-            if cli.base_addr != 0 {
-                println!(
-                    "Assembled {} bytes at base 0x{:06X} to {}",
-                    machine_code.len(),
-                    cli.base_addr,
-                    args[3]
-                );
-            } else {
-                println!("Assembled {} bytes to {}", machine_code.len(), args[3]);
-            }
-            println!("Wrote listing to {}", args[4]);
         }
 
         "binary" => {
@@ -1720,7 +1474,7 @@ fn main() {
         }
 
         _ => {
-            eprintln!("Unknown command. Use --demo, --run, --load-binary, or --assemble");
+            eprintln!("Unknown command. Use --demo, --lgo, or --load-binary");
         }
     }
 }
@@ -1753,6 +1507,7 @@ mod tests {
         assert_eq!(parse_numeric_addr("xyz"), None);
         assert_eq!(parse_numeric_addr(""), None);
     }
+
 
     #[test]
     fn test_p24_magic_detection() {
@@ -1832,48 +1587,47 @@ mod tests {
         fs::remove_file(&tmp).ok();
     }
 
+    /// Shell out to `cor24-asm -` to assemble `source`, returning the
+    /// `.lgo` text. Tests under cli/ require cor24-asm on PATH.
+    fn asm_to_lgo(source: &str) -> String {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("cor24-asm")
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("cor24-asm not on PATH; required by CLI tests");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(source.as_bytes())
+            .unwrap();
+        let output = child
+            .wait_with_output()
+            .expect("cor24-asm wait_with_output failed");
+        if !output.status.success() {
+            panic!(
+                "cor24-asm failed: status={:?}\nstderr=\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        String::from_utf8(output.stdout).expect("cor24-asm output not UTF-8")
+    }
+
     #[test]
     fn test_binary_mode_runs_program() {
-        let mut asm = Assembler::new();
-        let result = asm.assemble("lc r0, 42\nhalt:\n bra halt");
-        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        let bytes: Vec<u8> = result
-            .lines
-            .iter()
-            .flat_map(|l| l.bytes.iter().copied())
-            .collect();
-
+        let lgo = asm_to_lgo("lc r0, 42\nhalt:\n bra halt");
         let mut emu = EmulatorCore::new();
-        for (i, &b) in bytes.iter().enumerate() {
-            emu.write_byte(i as u32, b);
-        }
+        emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_pc(0);
         emu.resume();
         emu.run_batch(100);
         let snap = emu.snapshot();
         assert_eq!(snap.regs[0], 42);
-        assert!(snap.halted);
-    }
-
-    #[test]
-    fn test_assemble_at_base_and_load() {
-        let mut asm = Assembler::new();
-        let code = "la r0, target\ntarget:\n  lc r1, 99\nhalt:\n  bra halt";
-        let result = asm.assemble_at(code, 0x010000);
-        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-
-        assert_eq!(result.labels["target"], 0x010004);
-
-        let mut emu = EmulatorCore::new();
-        for (i, &b) in result.bytes.iter().enumerate() {
-            emu.write_byte(0x010000 + i as u32, b);
-        }
-        emu.set_pc(0x010000);
-        emu.resume();
-        emu.run_batch(100);
-        let snap = emu.snapshot();
-        assert_eq!(snap.regs[0], 0x010004);
-        assert_eq!(snap.regs[1], 99);
         assert!(snap.halted);
     }
 }
