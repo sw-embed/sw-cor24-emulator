@@ -34,6 +34,11 @@ pub const INITIAL_SP: u32 = 0xFEEC00;
 pub const IO_LEDSWDAT: u32 = 0xFF0000;
 /// Interrupt enable register: bit 0 = UART RX interrupt enable
 pub const IO_INTENABLE: u32 = 0xFF0010;
+/// I2C SCL line register: write bit 0 to drive (0 = pull low, 1 = release),
+/// read bit 0 for the effective line state (open-drain wired-AND).
+pub const IO_I2C_SCL: u32 = 0xFF0020;
+/// I2C SDA line register: same semantics as `IO_I2C_SCL`.
+pub const IO_I2C_SDA: u32 = 0xFF0021;
 /// UART data register: write to transmit, read to receive (auto-acknowledges RX)
 pub const IO_UARTDATA: u32 = 0xFF0100;
 /// UART status register:
@@ -189,6 +194,14 @@ pub struct IoState {
     pub uart_output: String,
     /// Chronological log of all UART input and output
     pub uart_log: UartLog,
+    /// I2C SCL line as last driven by the master (true = released high).
+    /// Effective line state is `master_scl & !slave_scl_pull`; slave-pull
+    /// arrives with the device layer in step B.1.
+    pub master_scl: bool,
+    /// I2C SDA line as last driven by the master (true = released high).
+    pub master_sda: bool,
+    /// I2C bus protocol state — phase, addressing, edge-detection memory.
+    pub i2c: crate::cpu::i2c_bus::I2cBusState,
 }
 
 impl IoState {
@@ -208,6 +221,9 @@ impl IoState {
             int_enable: 0,
             uart_output: String::new(),
             uart_log: UartLog::new(),
+            master_scl: true, // both I2C lines released high at reset
+            master_sda: true,
+            i2c: crate::cpu::i2c_bus::I2cBusState::new(),
         }
     }
 }
@@ -554,6 +570,11 @@ impl CpuState {
         match addr {
             IO_LEDSWDAT => self.io.switches,
             IO_INTENABLE => self.io.int_enable,
+            // Effective line state — the wired-AND of master drive
+            // and slave pull-down. SCL is master-only in our model
+            // (no clock stretching yet).
+            IO_I2C_SCL => self.io.master_scl as u8,
+            IO_I2C_SDA => (self.io.master_sda && !self.io.i2c.slave_sda_pull) as u8,
             IO_UARTDATA => self.io.uart_rx,
             IO_UARTSTAT => {
                 let mut status = 0u8;
@@ -595,6 +616,20 @@ impl CpuState {
             }
             IO_INTENABLE => {
                 self.io.int_enable = value;
+            }
+            // Master driver: low bit becomes the line's released/driven
+            // state (1 = released high, 0 = driven low). After updating
+            // the master bit, advance the bus state machine on the new
+            // effective lines (master AND'ed with the slave pull-down).
+            IO_I2C_SCL => {
+                self.io.master_scl = (value & 1) != 0;
+                let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
+                self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
+            }
+            IO_I2C_SDA => {
+                self.io.master_sda = (value & 1) != 0;
+                let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
+                self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
             }
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {
@@ -1177,5 +1212,33 @@ mod tests {
         assert_eq!(cpu.io.uart_log.entries().len(), 2);
         cpu.reset();
         assert!(cpu.io.uart_log.is_empty());
+    }
+
+    #[test]
+    fn test_i2c_lines_idle_high() {
+        let cpu = CpuState::new();
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 1);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
+    }
+
+    #[test]
+    fn test_i2c_master_line_roundtrip() {
+        let mut cpu = CpuState::new();
+
+        cpu.write_byte(IO_I2C_SCL, 0);
+        cpu.write_byte(IO_I2C_SDA, 0);
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 0);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 0);
+
+        cpu.write_byte(IO_I2C_SCL, 1);
+        cpu.write_byte(IO_I2C_SDA, 1);
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 1);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
+
+        // Only the low bit matters for the line driver.
+        cpu.write_byte(IO_I2C_SCL, 0xFE);
+        assert_eq!(cpu.read_byte(IO_I2C_SCL), 0);
+        cpu.write_byte(IO_I2C_SDA, 0xFF);
+        assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
     }
 }

@@ -14,6 +14,7 @@
 pub mod cpu;
 pub mod emulator;
 pub mod loader;
+pub mod peripherals;
 
 // Re-export main types for convenience
 pub use cpu::{
