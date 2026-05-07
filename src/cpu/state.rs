@@ -624,12 +624,12 @@ impl CpuState {
             IO_I2C_SCL => {
                 self.io.master_scl = (value & 1) != 0;
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
-                self.io.i2c.step(self.io.master_scl, eff_sda);
+                self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
             }
             IO_I2C_SDA => {
                 self.io.master_sda = (value & 1) != 0;
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
-                self.io.i2c.step(self.io.master_scl, eff_sda);
+                self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
             }
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {

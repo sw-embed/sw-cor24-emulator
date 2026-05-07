@@ -88,6 +88,8 @@ cor24-emu --lgo repl.lgo --terminal --echo --speed 0
 | `--code-end <addr>` | Upper bound for `--guard-jumps` |
 | `--canary <addr>[=val]` | Halt if memory at `addr` changes |
 | `--watch-range <lo> <hi>` | Halt if any byte in `[lo, hi]` changes |
+| `--i2c-device <spec>` | Attach a virtual I2C device — repeatable. See below |
+| `--dump-i2c` | Print the chronological I2C transaction log at end of run |
 | `--quiet, -q` | UART TX as plain text on stdout; logs to stderr |
 | `-h` | Short help |
 | `--help` | Extended help with AI agent guidance |
@@ -114,6 +116,44 @@ cor24-asm pvm.s -o pvm.lgo
 cor24-emu --lgo pvm.lgo --load-binary hello.p24@0x010000 \
           --terminal --speed 0 -n 50000000
 ```
+
+### Attaching virtual I2C devices
+
+`--i2c-device <spec>` registers a virtual chip on the emulator's
+bit-banged I2C bus (MMIO at `0xFF0020` SCL / `0xFF0021` SDA). The flag
+is repeatable; each spec gets its own 7-bit address. Recognised devices:
+
+| Spec | Behaviour |
+|------|-----------|
+| `add1@<addr>[?wrap=<n>]` | Universal +1 test slave: write a byte to seed `last`, each subsequent read returns `last = (last + 1) % wrap` (default wrap = 256). |
+| `tmp101@<addr>[?temp=<f>][?config=<n>]` | TI TMP101 temperature sensor: configure starting temperature in °C and starting config-register byte. Resolution honoured at read time. |
+
+Address formats accept `0x4A` / `4A` / `74` (decimal). Example:
+
+```bash
+# Run the canonical TMP101 demo against a virtual sensor at 25°C, dump the bus log
+cor24-emu --lgo examples/i2c/tmp101/tmp101.lgo \
+          --i2c-device tmp101@0x4A?temp=25.0 \
+          -n 200000 --quiet --dump-i2c
+```
+
+`--dump-i2c` renders one line per bus event with the CPU instruction
+count as a timestamp, e.g.:
+
+```
+--- I2C Transaction Log (12 entries) ---
+  I2C: i=      390  START
+  I2C: i=     4062  ADDR 0x4A WR ACK
+  I2C: i=     8329  WR   0x4A 0x01 ACK
+  I2C: i=    26957  ADDR 0x4A RD ACK
+  I2C: i=    31316  RD   0x4A 0x19
+  ...
+```
+
+The runtime API behind these flags is in `cor24_emulator::peripherals::i2c`
+(`build_i2c_device`, `EmulatorCore::attach_i2c_device`,
+`EmulatorCore::format_i2c_log`); see `examples/web_surface_smoke.rs`
+for a worked example of the full surface a Web UI is expected to call.
 
 ## cor24-dbg — Interactive debugger
 

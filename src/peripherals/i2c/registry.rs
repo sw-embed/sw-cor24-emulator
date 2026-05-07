@@ -78,13 +78,19 @@ impl AddressMap {
     }
 }
 
-/// Parse a CLI device spec and construct the device. Today only knows
-/// about `add1`; tmp101 / eeprom / ds3231 land in subsequent steps.
+/// Parse a CLI device spec and construct the device, returning the
+/// shared `Arc<Mutex<dyn I2cDevice>>` form the bus's address-routing
+/// table holds. Callers wanting a typed handle should use
+/// `EmulatorCore::attach_i2c_device(D::new(...))` directly instead.
 ///
 /// Spec syntax: `<name>@<addr>[?key=val&...]`. Address is 7-bit hex
-/// (`0x50` or `50`). For `add1` an optional `?wrap=<n>` parameter sets
-/// the wrap modulus (default 256).
-pub fn build_i2c_device(spec: &str) -> Result<Box<dyn I2cDevice>, String> {
+/// (`0x50` or `50`). Recognised devices:
+///   - `add1@<addr>[?wrap=<n>]`             — universal +1 test slave.
+///   - `tmp101@<addr>[?temp=<f>][?config=<n>]` — TI temp sensor.
+pub fn build_i2c_device(
+    spec: &str,
+) -> Result<std::sync::Arc<std::sync::Mutex<dyn I2cDevice>>, String> {
+    use std::sync::{Arc, Mutex};
     let (name_addr, params) = match spec.split_once('?') {
         Some((head, tail)) => (head, Some(tail)),
         None => (spec, None),
@@ -110,7 +116,7 @@ pub fn build_i2c_device(spec: &str) -> Result<Box<dyn I2cDevice>, String> {
                     }
                 }
             }
-            Ok(Box::new(Add1Device::new(addr, wrap)))
+            Ok(Arc::new(Mutex::new(Add1Device::new(addr, wrap))))
         }
         "tmp101" => {
             let mut dev = Tmp101Device::new(addr);
@@ -140,7 +146,7 @@ pub fn build_i2c_device(spec: &str) -> Result<Box<dyn I2cDevice>, String> {
                     }
                 }
             }
-            Ok(Box::new(dev))
+            Ok(Arc::new(Mutex::new(dev)))
         }
         other => Err(format!("unknown I2C device '{other}'")),
     }
@@ -160,16 +166,27 @@ fn parse_addr(s: &str) -> Option<u8> {
 mod tests {
     use super::*;
 
+    fn dev_address(spec: &str) -> u8 {
+        let arc = build_i2c_device(spec).unwrap();
+        let g = arc.lock().unwrap();
+        g.address()
+    }
+
+    fn dev_name(spec: &str) -> String {
+        let arc = build_i2c_device(spec).unwrap();
+        let g = arc.lock().unwrap();
+        g.name().to_string()
+    }
+
     #[test]
     fn build_add1_default_wrap() {
-        let dev = build_i2c_device("add1@0x50").unwrap();
-        assert_eq!(dev.address(), 0x50);
+        assert_eq!(dev_address("add1@0x50"), 0x50);
+        assert_eq!(dev_name("add1@0x50"), "add1");
     }
 
     #[test]
     fn build_add1_with_wrap() {
-        let dev = build_i2c_device("add1@0x42?wrap=10").unwrap();
-        assert_eq!(dev.address(), 0x42);
+        assert_eq!(dev_address("add1@0x42?wrap=10"), 0x42);
     }
 
     fn expect_err(spec: &str, needle: &str) {
@@ -196,9 +213,8 @@ mod tests {
 
     #[test]
     fn build_tmp101_default() {
-        let dev = build_i2c_device("tmp101@0x4A").unwrap();
-        assert_eq!(dev.address(), 0x4A);
-        assert_eq!(dev.name(), "tmp101");
+        assert_eq!(dev_address("tmp101@0x4A"), 0x4A);
+        assert_eq!(dev_name("tmp101@0x4A"), "tmp101");
     }
 
     #[test]

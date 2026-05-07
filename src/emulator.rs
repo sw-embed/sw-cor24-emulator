@@ -479,11 +479,40 @@ impl EmulatorCore {
         ))
     }
 
+    /// Attach an already-shared I2C device (the form `build_i2c_device`
+    /// produces). Used by the CLI's `--i2c-device` flag where no typed
+    /// handle is needed.
+    pub fn attach_i2c_device_shared(
+        &mut self,
+        dev: std::sync::Arc<std::sync::Mutex<dyn crate::peripherals::i2c::I2cDevice>>,
+    ) -> Result<(), crate::peripherals::i2c::AddressInUse> {
+        let addr = dev.lock().expect("attach: device lock poisoned").address();
+        self.cpu.io.i2c.addresses.insert(addr, dev)
+    }
+
     /// Detach all I2C devices. Existing handles still hold their `Arc`
     /// to the device, so chip-specific mutation through `handle.with`
     /// continues to work; only bus routing is cleared.
     pub fn detach_i2c_devices(&mut self) {
         self.cpu.io.i2c.addresses.clear();
+    }
+
+    /// Read-only view of the I2C transaction log — chronological
+    /// START / STOP / address / read / write entries with instruction
+    /// timestamps.
+    pub fn i2c_log(&self) -> &crate::peripherals::i2c::log::I2cLog {
+        &self.cpu.io.i2c.log
+    }
+
+    /// Render the I2C log as a multiline `--dump-i2c`-friendly string.
+    pub fn format_i2c_log(&self) -> String {
+        self.cpu.io.i2c.log.format()
+    }
+
+    /// Clear the I2C log — useful when running multiple unrelated
+    /// segments of bus traffic and only the latest is of interest.
+    pub fn clear_i2c_log(&mut self) {
+        self.cpu.io.i2c.log.clear();
     }
 
     pub fn send_uart_byte(&mut self, byte: u8) {

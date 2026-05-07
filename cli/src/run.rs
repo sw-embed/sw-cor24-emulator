@@ -67,6 +67,10 @@ fn print_short_help() {
     println!("  --entry, -e <label|addr> Set entry point (numeric address only)");
     println!("  --dump                 Dump CPU state, I/O, and non-zero memory after halt");
     println!("  --dump-uart            Show UART transaction log (chronological IN/OUT)");
+    println!("  --dump-i2c             Show I2C transaction log (chronological START/byte/STOP)");
+    println!("  --i2c-device <spec>    Attach an I2C device (repeatable). Specs:");
+    println!("                           add1@<addr>[?wrap=<n>]   universal +1 test slave");
+    println!("                           tmp101@<addr>[?temp=<f>][?config=<n>]  TI temp sensor");
     println!("  --trace <N>            Dump last N instructions on halt/timeout (default: 50)");
     println!("  --step                 Print each instruction as it executes");
     println!("  --terminal             Bridge stdin/stdout to UART (interactive mode)");
@@ -93,6 +97,9 @@ fn print_short_help() {
         "  cor24-emu --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 --entry 0 --terminal"
     );
     println!("  cor24-emu --load-binary pvm.bin@0 --patch 0x09D7=0x010000 --entry 0 --terminal");
+    println!(
+        "  cor24-emu --lgo examples/i2c/tmp101/tmp101.lgo --i2c-device tmp101@0x4A?temp=25.0 \\\n                 -n 200000 --quiet --dump-i2c"
+    );
 }
 
 fn print_long_help() {
@@ -395,6 +402,7 @@ struct CliArgs {
     file: Option<String>,
     dump: bool,
     dump_uart: bool,
+    dump_i2c: bool,
     entry: Option<String>,
     uart_input: Vec<u8>,
     trace: usize,
@@ -411,6 +419,10 @@ struct CliArgs {
     code_end: Option<u32>,
     canaries: Vec<(u32, u32)>,
     watch_ranges: Vec<(u32, u32)>,
+    /// I2C device specs to attach before run (e.g. `tmp101@0x4A?temp=25.0`).
+    i2c_devices: Vec<String>,
+    /// Path to a `.lgo` fixture to load (instead of assembling source).
+    lgo_file: Option<String>,
 }
 
 /// Parse a numeric address string: 0x prefix, h suffix, or decimal.
@@ -434,6 +446,7 @@ fn parse_args() -> CliArgs {
         file: None,
         dump: false,
         dump_uart: false,
+        dump_i2c: false,
         entry: None,
         uart_input: Vec::new(),
         trace: 0,
@@ -450,6 +463,8 @@ fn parse_args() -> CliArgs {
         code_end: None,
         canaries: Vec::new(),
         watch_ranges: Vec::new(),
+        i2c_devices: Vec::new(),
+        lgo_file: None,
     };
 
     let mut i = 1;
@@ -483,6 +498,25 @@ fn parse_args() -> CliArgs {
             }
             "--dump-uart" => {
                 cli.dump_uart = true;
+            }
+            "--dump-i2c" => {
+                cli.dump_i2c = true;
+            }
+            "--i2c-device" => {
+                if i + 1 < args.len() {
+                    cli.i2c_devices.push(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("Error: --i2c-device requires a spec (e.g. tmp101@0x4A?temp=25.0)");
+                    std::process::exit(1);
+                }
+            }
+            "--lgo" => {
+                cli.command = "lgo".to_string();
+                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                    cli.lgo_file = Some(args[i + 1].clone());
+                    i += 1;
+                }
             }
             "--max-instructions" | "-n" => {
                 if i + 1 < args.len() {
@@ -769,6 +803,36 @@ fn dump_memory_region(emu: &EmulatorCore, start: u32, end: u32) {
 }
 
 /// Print I/O state in a human-readable format
+/// Attach every device named in `--i2c-device` specs.
+fn attach_i2c_devices(emu: &mut EmulatorCore, specs: &[String]) {
+    use cor24_emulator::peripherals::i2c::build_i2c_device;
+    for spec in specs {
+        let dev = build_i2c_device(spec).unwrap_or_else(|e| {
+            eprintln!("Error: --i2c-device '{spec}': {e}");
+            std::process::exit(1);
+        });
+        if let Err(e) = emu.attach_i2c_device_shared(dev) {
+            eprintln!("Error: --i2c-device '{spec}': {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Print the I2C transaction log if `--dump-i2c` was set.
+fn print_dump_i2c(emu: &EmulatorCore) {
+    let log = emu.format_i2c_log();
+    if !log.is_empty() {
+        let entry_count = emu.i2c_log().entries().len();
+        println!(
+            "\n--- I2C Transaction Log ({} entries) ---",
+            entry_count
+        );
+        print!("{}", log);
+    } else {
+        println!("\n--- I2C Transaction Log: (no events) ---");
+    }
+}
+
 fn print_io_state(emu: &EmulatorCore, dump_uart: bool) {
     let snap = emu.snapshot();
     println!("\n=== I/O FF0000-FFFFFF (64 KB, memory-mapped peripherals) ===");
@@ -1343,6 +1407,84 @@ fn main() {
             if cli.dump {
                 print_dump(&emu, cli.dump_uart);
             }
+            if cli.dump_i2c {
+                print_dump_i2c(&emu);
+            }
+        }
+
+        "lgo" => {
+            let filename = match cli.lgo_file.clone() {
+                Some(f) => f,
+                None => {
+                    eprintln!("Usage: cor24-emu --lgo <file.lgo>");
+                    return;
+                }
+            };
+            let content = fs::read_to_string(&filename).unwrap_or_else(|e| {
+                eprintln!("Error: cannot read --lgo '{}': {}", filename, e);
+                std::process::exit(1);
+            });
+
+            let mut emu = EmulatorCore::new();
+            if cli.uart_never_ready {
+                emu.set_uart_never_ready(true);
+            }
+            if cli.switch_pressed {
+                emu.set_button_pressed(true);
+            }
+            if cli.stack_kb == 8 {
+                emu.set_reg(4, 0xFF0000);
+                emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
+            }
+
+            let bytes = emu.load_lgo(&content, None).unwrap_or_else(|e| {
+                eprintln!("Error: load_lgo failed: {}", e);
+                std::process::exit(1);
+            });
+            if !cli.quiet {
+                println!("Loaded {} bytes from {}", bytes, filename);
+            }
+
+            if let Some(entry_str) = &cli.entry
+                && let Some(addr) = parse_numeric_addr(entry_str)
+            {
+                emu.set_pc(addr);
+                if !cli.quiet {
+                    println!("Entry point: 0x{:06X}", addr);
+                }
+            }
+
+            attach_i2c_devices(&mut emu, &cli.i2c_devices);
+
+            let guard = GuardState::install(&cli, &mut emu);
+            let instructions = run_with_timing(
+                &mut emu,
+                cli.speed,
+                cli.time_limit,
+                cli.max_instructions,
+                &cli.uart_input,
+                cli.quiet,
+                &guard,
+            );
+
+            if !cli.quiet {
+                let uart = emu.get_uart_output();
+                if !uart.is_empty() {
+                    println!("\nUART output: {}", uart);
+                }
+                println!("\nExecuted {} instructions", instructions);
+            } else {
+                eprintln!("\nExecuted {} instructions", instructions);
+            }
+            if cli.trace > 0 {
+                print!("{}", emu.trace().format_last(cli.trace));
+            }
+            if cli.dump {
+                print_dump(&emu, cli.dump_uart);
+            }
+            if cli.dump_i2c {
+                print_dump_i2c(&emu);
+            }
         }
 
         "binary" => {
@@ -1417,6 +1559,9 @@ fn main() {
                 if cli.dump {
                     print_dump(&emu, cli.dump_uart);
                 }
+                if cli.dump_i2c {
+                    print_dump_i2c(&emu);
+                }
                 return;
             }
 
@@ -1470,6 +1615,9 @@ fn main() {
             }
             if cli.dump {
                 print_dump(&emu, cli.dump_uart);
+            }
+            if cli.dump_i2c {
+                print_dump_i2c(&emu);
             }
         }
 
@@ -1533,6 +1681,55 @@ mod tests {
         assert_eq!(emu.read_byte(0x100), 0x00);
         assert_eq!(emu.read_byte(0x101), 0x00);
         assert_eq!(emu.read_byte(0x102), 0x01);
+    }
+
+    #[test]
+    fn test_attach_i2c_devices_via_cli_helper() {
+        let mut emu = EmulatorCore::new();
+        let specs = vec![
+            "add1@0x50".to_string(),
+            "tmp101@0x4A?temp=23.5".to_string(),
+        ];
+        attach_i2c_devices(&mut emu, &specs);
+        assert_eq!(emu.i2c().addresses.len(), 2);
+    }
+
+    #[test]
+    fn test_print_dump_i2c_renders_log_lines() {
+        // End-to-end: attach a tmp101, drive a synthetic transaction
+        // through MMIO, then verify format_i2c_log() produces a string
+        // a CLI consumer can grep through.
+        let mut emu = EmulatorCore::new();
+        attach_i2c_devices(&mut emu, &["tmp101@0x4A?temp=25.0".to_string()]);
+
+        // Synthetic START + addr write + STOP
+        for &(a, v) in &[
+            (0xFF0021u32, 1u8),
+            (0xFF0020, 1),
+            (0xFF0021, 0),
+            (0xFF0020, 0),
+        ] {
+            emu.write_byte(a, v);
+        }
+        let byte = 0x4A << 1; // addr write
+        for i in (0..8).rev() {
+            emu.write_byte(0xFF0021, (byte >> i) & 1);
+            emu.write_byte(0xFF0020, 1);
+            emu.write_byte(0xFF0020, 0);
+        }
+        emu.write_byte(0xFF0021, 1);
+        emu.write_byte(0xFF0020, 1);
+        emu.write_byte(0xFF0020, 0);
+        emu.write_byte(0xFF0021, 0);
+        emu.write_byte(0xFF0020, 1);
+        emu.write_byte(0xFF0021, 1);
+
+        let log = emu.format_i2c_log();
+        assert!(log.contains("START"), "log should contain START:\n{log}");
+        assert!(
+            log.contains("ADDR 0x4A WR ACK"),
+            "log should record the ACKed address:\n{log}",
+        );
     }
 
     #[test]

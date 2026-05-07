@@ -244,6 +244,13 @@ impl Tmp101HandleExt for crate::peripherals::i2c::I2cHandle<Tmp101Device> {
 mod tests {
     use super::*;
 
+    /// Mirror of the demo's 10-bit sign extension, used to assert the
+    /// guest-side decode path.
+    fn sign_extend_10(value: u16) -> i32 {
+        let v = (value & 0x03FF) as i32;
+        if v & 0x0200 != 0 { v - 0x0400 } else { v }
+    }
+
     fn read_temp_register(d: &mut Tmp101Device) -> (u8, u8) {
         d.on_start();
         // pretend the master wrote pointer=0 then issued repeated START
@@ -389,10 +396,3 @@ mod tests {
     }
 }
 
-// Re-implementation of the demo's 10-bit sign extension, used by the
-// unit tests above to mirror the guest-side decode.
-#[cfg(test)]
-fn sign_extend_10(value: u16) -> i32 {
-    let v = (value & 0x03FF) as i32;
-    if v & 0x0200 != 0 { v - 0x0400 } else { v }
-}

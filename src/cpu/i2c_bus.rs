@@ -17,6 +17,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::peripherals::i2c::device::Ack;
+use crate::peripherals::i2c::log::{I2cEvent, I2cLog};
 use crate::peripherals::i2c::registry::AddressMap;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +90,10 @@ pub struct I2cBusState {
     /// far as in-memory state is concerned.
     #[serde(skip, default)]
     pub addresses: AddressMap,
+    /// Chronological log of bus events — START / STOP / address byte /
+    /// per-byte writes and reads. Skipped from serde (transport state).
+    #[serde(skip)]
+    pub log: I2cLog,
 }
 
 impl fmt::Debug for I2cBusState {
@@ -104,6 +109,7 @@ impl fmt::Debug for I2cBusState {
             .field("last_sda", &self.last_sda)
             .field("slave_sda_pull", &self.slave_sda_pull)
             .field("attached", &self.addresses.len())
+            .field("log_entries", &self.log.len())
             .finish()
     }
 }
@@ -123,26 +129,27 @@ impl I2cBusState {
             tx_byte: 0,
             pending_ack: Ack::Nak,
             addresses: AddressMap::new(),
+            log: I2cLog::new(),
         }
     }
 
     /// Advance the state machine after the master writes either I2C
     /// line. `new_scl` / `new_sda` are the *effective* lines — the
     /// caller (state.rs::write_io) is expected to AND in the slave
-    /// pull-down. The returned phase is observable through the public
-    /// `phase` field.
-    pub fn step(&mut self, new_scl: bool, new_sda: bool) {
+    /// pull-down. `instruction` is the CPU's current instruction count,
+    /// used to time-stamp log entries.
+    pub fn step(&mut self, new_scl: bool, new_sda: bool, instruction: u64) {
         let prev_scl = self.last_scl;
         let prev_sda = self.last_sda;
 
         // START/STOP edges (SCL high throughout) take precedence over
         // ordinary SCL rise/fall sampling.
         if new_scl && prev_scl && prev_sda && !new_sda {
-            self.handle_start();
+            self.handle_start(instruction);
         } else if new_scl && prev_scl && !prev_sda && new_sda {
-            self.handle_stop();
+            self.handle_stop(instruction);
         } else if new_scl && !prev_scl {
-            self.on_scl_rise(new_sda);
+            self.on_scl_rise(new_sda, instruction);
         } else if !new_scl && prev_scl {
             self.on_scl_fall();
         }
@@ -151,15 +158,16 @@ impl I2cBusState {
         self.last_sda = new_sda;
     }
 
-    fn handle_start(&mut self) {
+    fn handle_start(&mut self, instruction: u64) {
         self.phase = I2cPhase::Started;
         self.current_target = None;
         self.last_byte = None;
         self.transactions = self.transactions.saturating_add(1);
         self.slave_sda_pull = false;
+        self.log.push(I2cEvent::Start, instruction);
     }
 
-    fn handle_stop(&mut self) {
+    fn handle_stop(&mut self, instruction: u64) {
         let target = self.current_target;
         self.phase = I2cPhase::Stopped;
         self.current_target = None;
@@ -170,9 +178,10 @@ impl I2cBusState {
         {
             d.on_stop();
         }
+        self.log.push(I2cEvent::Stop, instruction);
     }
 
-    fn on_scl_rise(&mut self, sda: bool) {
+    fn on_scl_rise(&mut self, sda: bool, instruction: u64) {
         let sda_bit = sda as u8;
         match self.phase {
             I2cPhase::Idle => {
@@ -202,6 +211,23 @@ impl I2cBusState {
                     }
                     self.phase = I2cPhase::AckMasterToSlave;
                     self.dispatch_byte_completion(was_addr, new_bits);
+                    // Log AFTER dispatch so pending_ack reflects the
+                    // device's response.
+                    let acked = matches!(self.pending_ack, Ack::Ack);
+                    if was_addr {
+                        let addr = new_bits >> 1;
+                        let dir = self.current_dir;
+                        self.log.push(
+                            I2cEvent::Address { addr, dir, ack: acked },
+                            instruction,
+                        );
+                    } else {
+                        let addr = self.current_target.unwrap_or(0);
+                        self.log.push(
+                            I2cEvent::WriteByte { addr, byte: new_bits, ack: acked },
+                            instruction,
+                        );
+                    }
                 } else {
                     self.phase = I2cPhase::RxByte {
                         bits: new_bits,
@@ -229,6 +255,11 @@ impl I2cBusState {
                 if new_n == 8 {
                     self.last_byte = Some(new_bits);
                     self.phase = I2cPhase::AckSlaveToMaster;
+                    let addr = self.current_target.unwrap_or(0);
+                    self.log.push(
+                        I2cEvent::ReadByte { addr, byte: new_bits },
+                        instruction,
+                    );
                 } else {
                     self.phase = I2cPhase::TxByte {
                         bits: new_bits,
