@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 7,
+    "step": "cli-flag-removal"
+  },
+  "action": "Replaced --run and --assemble parser arms with a migration-message rejection (exit 2). Deleted the run and assemble command branches in main, the load_assembled helper, CliArgs.base_addr, the --base-addr parser arm, AssemblyResult and Assembler imports, and corresponding help-text entries. Rewrote print_short_help + print_long_help. Migrated test_binary_mode_runs_program; deleted test_assemble_at_base_and_load. Wrote cli/tests/removed_flags.rs with two integration tests using CARGO_BIN_EXE_cor24-emu.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-06T23:16:53"
+}

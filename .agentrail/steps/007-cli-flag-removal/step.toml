@@ -1,0 +1,13 @@
+number = 7
+slug = "cli-flag-removal"
+status = "completed"
+description = """
+Step 007 — remove --run and --assemble from cli/src/run.rs.
+
+cli/src/run.rs..."""
+role = "legacy"
+context_files = []
+created_at = "2026-05-06T23:08:46"
+completed_at = "2026-05-06T23:16:53"
+task_type = "rust-feature"
+commits = ["1f4252b4b54c5a7b4bcb056d7801d74447cede25"]

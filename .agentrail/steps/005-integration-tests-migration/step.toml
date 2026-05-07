@@ -1,0 +1,13 @@
+number = 5
+slug = "integration-tests-migration"
+status = "completed"
+description = """
+Step 005 — migrate tests/integration_tests.rs Assembler users.
+
+Same migrat..."""
+role = "legacy"
+context_files = []
+created_at = "2026-05-06T22:59:39"
+completed_at = "2026-05-06T23:02:37"
+task_type = "rust-feature"
+commits = ["5b4cf39742f57a901350ca53a9ec04d66af674c0"]

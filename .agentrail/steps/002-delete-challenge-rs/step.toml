@@ -1,0 +1,13 @@
+number = 2
+slug = "delete-challenge-rs"
+status = "completed"
+description = """
+Step 002 — delete src/challenge.rs and migrate callers.
+
+challenge.rs is de..."""
+role = "legacy"
+context_files = []
+created_at = "2026-05-06T22:46:01"
+completed_at = "2026-05-06T22:51:59"
+task_type = "rust-feature"
+commits = ["6bfc1abb45ef7eac18a9d754b82638eace38ab64"]

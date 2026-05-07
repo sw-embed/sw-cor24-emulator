@@ -1,0 +1,13 @@
+number = 3
+slug = "demo-mode-as-lgo"
+status = "completed"
+description = """
+Step 003 — embed --demo as a pre-built .lgo.
+
+Today cli/src/run.rs::main ma..."""
+role = "legacy"
+context_files = []
+created_at = "2026-05-06T22:51:59"
+completed_at = "2026-05-06T22:56:29"
+task_type = "rust-feature"
+commits = ["90aaad927d19463a52cef6134afc6e8b53ed3dcf"]
