@@ -783,17 +783,15 @@ mod tests {
         assert!(emu.is_halted(), "Should halt on '!'");
     }
 
-    /// Test echo using the challenge.rs embedded source (same as web UI)
+    /// Test echo using the embedded source (same path the deprecated web UI used)
     #[test]
     fn test_echo_via_challenge_source() {
         use crate::assembler::Assembler;
-        use crate::challenge::get_examples;
 
-        let examples = get_examples();
-        let echo = examples.iter().find(|(name, _, _)| name == "Echo").unwrap();
+        let source = include_str!("examples/assembler/echo.s");
 
         let mut asm = Assembler::new();
-        let result = asm.assemble(&echo.2);
+        let result = asm.assemble(source);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
 
         let mut emu = EmulatorCore::new();
@@ -838,13 +836,11 @@ mod tests {
     #[test]
     fn test_uart_log_echo_session() {
         use crate::assembler::Assembler;
-        use crate::challenge::get_examples;
 
-        let examples = get_examples();
-        let echo = examples.iter().find(|(name, _, _)| name == "Echo").unwrap();
+        let source = include_str!("examples/assembler/echo.s");
 
         let mut asm = Assembler::new();
-        let result = asm.assemble(&echo.2);
+        let result = asm.assemble(source);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
 
         let mut emu = EmulatorCore::new();
