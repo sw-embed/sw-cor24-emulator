@@ -76,26 +76,28 @@ msp430-to-cor24 my_program.msp430.s -o my_program.cor24.s
 similar 16-bit architecture that Rust can already target. The translator
 maps MSP430 registers and instructions to their COR24 equivalents.
 
-### `cor24-run` — Headless Emulator
+### `cor24-emu` — Headless Emulator
 
-**What:** Assembles a `.cor24.s` file and runs it in the emulator, then
-dumps registers, memory, and UART output.
-**Where:** `rust-to-cor24/` directory.
-**Build:** `cargo build --release` (in `rust-to-cor24/`)
-**Binary:** `target/release/cor24-run`
+**What:** Runs a pre-built `.lgo` in the emulator and dumps registers,
+memory, and UART output. Assembly (`.s` → `.lgo`) is `cor24-asm`'s
+job; this binary is a pure runtime consumer.
+**Build:** `cargo build --release`
+**Binary:** `target/release/cor24-emu`
 
-**When to use:** When you want to run a COR24 assembly program
+**When to use:** when you want to run a COR24 assembly program
 non-interactively and see the results. Used by the demo scripts.
 
 ```bash
-# Assemble and run with register/memory dump
-cor24-run --run program.cor24.s --dump --speed 0
+# Assemble, then run with register/memory dump
+cor24-asm program.cor24.s -o program.lgo
+cor24-emu --lgo program.lgo --dump --speed 0
 
 # With a time limit (seconds) and instruction limit
-cor24-run --run program.cor24.s --dump --speed 0 --time 5 -n 100000
+cor24-emu --lgo program.lgo --dump --speed 0 --time 5 -n 100000
 
 # Feed UART input (for interactive programs like echo)
-cor24-run --run echo.cor24.s --dump --speed 0 --uart-input 'abc\x21'
+cor24-asm echo.cor24.s -o echo.lgo
+cor24-emu --lgo echo.lgo --dump --speed 0 --uart-input 'abc\x21'
 ```
 
 ### `wasm2cor24` — Experimental WASM → COR24 (unused)

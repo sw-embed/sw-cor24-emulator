@@ -53,19 +53,26 @@ same CLI interface — same flags, same behavior — so migration is a rename.
 
 ### What's the same
 
-- `--run <file.s>` — assemble and execute
+- `--lgo <file.lgo>` — load and execute a pre-built program
 - `--load-binary <file>@<addr>` — load raw binary at address
 - `--patch <addr>=<value>` — patch memory before execution
 - `--terminal` / `--echo` — interactive UART bridge
-- `--dump` — register + memory dump at halt
+- `--dump` / `--dump-uart` — register/memory and UART log dumps at halt
 - `--trace <N>` — instruction trace on halt
 - `--step` — single-step with trace output
 - `-u` / `--uart-input` — send characters to UART RX
 - `-n` / `--max-insns` — instruction limit
 - `-s` / `--speed` — inter-instruction delay
-- `--assemble` — assemble to binary + listing
 - `--demo` — built-in LED counter demo
 - `.p24` magic header auto-detection
+
+### What changed (cor24-asm split)
+
+The internal assembler is gone. The flags below are removed; assembly
+is the job of [`cor24-asm`](https://github.com/softwarewrighter/sw-cor24-x-assembler):
+
+- ~~`--run <file.s>`~~ → `cor24-asm <file.s> -o <file.lgo>` then `cor24-emu --lgo <file.lgo>`
+- ~~`--assemble <in.s> <out.bin> <out.lst>`~~ → `cor24-asm <in.s> --bin <out.bin> --listing <out.lst>`
 
 ### What's new in cor24-emu
 
@@ -123,10 +130,10 @@ cor24-emulator (this project, library)
 
 | Task | Use |
 |------|-----|
-| Run a `.s` assembly file | `cor24-emu --run prog.s` |
-| Run with memory dump | `cor24-emu --run prog.s --dump --speed 0` |
-| Interactive UART session | `cor24-emu --run repl.s --terminal` |
-| Load guest binary (p24, forth) | `cor24-emu --run pvm.s --load-binary guest.p24@0x010000 --terminal` |
+| Run a `.s` assembly file | `cor24-asm prog.s -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo` |
+| Run with memory dump | `cor24-asm prog.s -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo --dump --speed 0` |
+| Interactive UART session | `cor24-asm repl.s -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo --terminal` |
+| Load guest binary (p24, forth) | `cor24-asm pvm.s -o /tmp/p.lgo && cor24-emu --lgo /tmp/p.lgo --load-binary guest.p24@0x010000 --terminal` |
 | Debug interactively (breakpoints, examine) | `cor24-dbg prog.lgo` |
 | Compile Rust to COR24 | `msp430-to-cor24` (from sw-cor24-rust) |
 | Compile C to COR24 | `tc24r` (from sw-cor24-x-tinyc) |

@@ -2,8 +2,9 @@
 
 ## Overview
 
-The COR24 toolchain consists of three CLI tools and a web UI. All tools
-are written in Rust and share the same assembler and emulator core.
+The COR24 toolchain consists of three CLI tools. They are written in
+Rust and split assembly from execution: `cor24-asm` produces artifacts,
+`cor24-emu` consumes them.
 
 ```
 Rust source (.rs)
@@ -11,73 +12,95 @@ Rust source (.rs)
 MSP430 assembly (.msp430.s)
     ↓ msp430-to-cor24 (translator)
 COR24 assembly (.cor24.s)
-    ↓ assembler (built into cor24-run / Web UI)
-Machine code (bytes in memory)
-    ↓ emulator
+    ↓ cor24-asm   (sw-cor24-x-assembler)
+.lgo / .bin / .lst
+    ↓ cor24-emu --lgo / --load-binary
 Execution + final state
 ```
 
-## cor24-run — Batch runner
+## cor24-emu — Batch runner
 
-Assembles a `.s` file and runs it in the emulator. No intermediate files
-are produced — the assembler outputs bytes directly into emulator memory.
+Loads a pre-built `.lgo` (or raw bytes via `--load-binary`) and runs it.
+The emulator does not assemble — point it at output from `cor24-asm`
+or another producer of the `.lgo` format.
 
 ```bash
-# Assemble and run, dump final state
-cor24-run --run fibonacci.s --dump
+# Two-step: assemble, then run
+cor24-asm fibonacci.s -o fibonacci.lgo
+cor24-emu --lgo fibonacci.lgo --dump
 
 # With instruction trace (last 50 instructions)
-cor24-run --run fibonacci.s --dump --trace 50
+cor24-emu --lgo fibonacci.lgo --dump --trace 50
 
 # With UART input (for interactive programs like Echo)
-cor24-run --run echo.s --uart-input 'abc!' --dump
+cor24-asm echo.s -o echo.lgo
+cor24-emu --lgo echo.lgo --uart-input 'abc!' --dump
 
 # Timed execution with speed limit
-cor24-run --run blink_led.s --speed 100000 --time 5
+cor24-asm blink_led.s -o blink_led.lgo
+cor24-emu --lgo blink_led.lgo --speed 100000 --time 5
 
 # Step mode: print each instruction as it executes
-cor24-run --run fibonacci.s --step
+cor24-emu --lgo fibonacci.lgo --step
 
-# Run a demo with animated speed
-cor24-run --demo --speed 100000 --time 10
+# Run a built-in demo (no .s/.lgo input needed)
+cor24-emu --demo --speed 100000 --time 10
 
-# Load a guest binary into memory after assembly
-cor24-run --run pvm.s --load-binary hello.p24@0x010000 --terminal
+# Load a guest binary into memory at a fixed address
+cor24-asm pvm.s -o pvm.lgo
+cor24-emu --lgo pvm.lgo --load-binary hello.p24@0x010000 --terminal
 
 # Multiple binaries at different addresses
-cor24-run --run loader.s --load-binary code.bin@0x010000 --load-binary data.bin@0x020000
+cor24-asm loader.s -o loader.lgo
+cor24-emu --lgo loader.lgo \
+          --load-binary code.bin@0x010000 \
+          --load-binary data.bin@0x020000
 
 # Interactive terminal mode (stdin/stdout bridged to UART)
-cor24-run --run repl.s --terminal --echo --speed 0
+cor24-asm repl.s -o repl.lgo
+cor24-emu --lgo repl.lgo --terminal --echo --speed 0
 ```
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
-| `--run <file.s>` | Assemble and run a COR24 assembly file |
+| `--lgo <file.lgo>` | Load a pre-built `.lgo` and run it |
+| `--demo` | Run the built-in LED counter demo |
+| `--load-binary <file>@<addr>` | Load raw bytes into memory at address (repeatable) |
+| `--patch <addr>=<value>` | Write 24-bit value to memory after loading |
+| `--entry <label\|addr>` | Set entry point |
 | `--dump` | Dump CPU state, I/O, and non-zero memory after halt |
+| `--dump-uart` | Show UART transaction log (chronological IN/OUT) |
 | `--trace <N>` | Show last N instructions on halt/timeout (default: 50) |
 | `--step` | Print each instruction as it executes |
 | `--speed <N>` | Instructions per second (0 = unlimited) |
 | `--time <secs>` | Time limit in seconds |
 | `--max-instructions <N>` | Stop after N instructions (-1 = no limit) |
 | `--uart-input <str>` | Send characters to UART RX (supports \n, \x21) |
-| `--uart-never-ready` | UART TX stays busy forever (test that programs poll before writing) |
-| `--entry <label>` | Set entry point to label address |
-| `--load-binary <file>@<addr>` | Load raw bytes into memory at address (after assembly) |
+| `--uart-file <path>` | Read file contents into UART RX buffer |
+| `--uart-never-ready` | UART TX stays busy forever (test polling discipline) |
 | `--terminal` | Bridge stdin/stdout to UART (interactive mode) |
 | `--echo` | Local echo in terminal mode |
+| `--switch <on\|off>` | Set button S2 state (default: off/released) |
 | `--stack-kilobytes <3\|8>` | EBR stack size (default: 3, max: 8) |
+| `--guard-jumps` | Halt if PC leaves the code region |
+| `--code-end <addr>` | Upper bound for `--guard-jumps` |
+| `--canary <addr>[=val]` | Halt if memory at `addr` changes |
+| `--watch-range <lo> <hi>` | Halt if any byte in `[lo, hi]` changes |
+| `--quiet, -q` | UART TX as plain text on stdout; logs to stderr |
 | `-h` | Short help |
 | `--help` | Extended help with AI agent guidance |
 | `-V, --version` | Version, copyright, license, build info |
 
+Assembling `.s` to `.lgo` is the job of [`cor24-asm`](https://github.com/softwarewrighter/sw-cor24-x-assembler).
+This emulator binary does not include an assembler.
+
 ### Loading guest binaries
 
 The `--load-binary <file>@<addr>` flag loads raw bytes from a file into
-emulator memory at a specified address. Loading happens after the host
-`.s` program is assembled but before execution begins. This is useful
+emulator memory at a specified address. Loading happens after the
+`.lgo` (if any) is loaded but before execution begins. This is useful
 for VMs (p-code, Forth, Lisp) that need guest programs pre-loaded in memory.
 
 Address formats: `0x010000` (hex prefix), `010000h` (hex suffix), `65536` (decimal).
@@ -87,7 +110,9 @@ code and data segments at different addresses.
 
 ```bash
 # P-code VM pipeline: assemble pvm.s, load guest .p24, run with UART I/O
-cor24-run --run pvm.s --load-binary hello.p24@0x010000 --terminal --speed 0 -n 50000000
+cor24-asm pvm.s -o pvm.lgo
+cor24-emu --lgo pvm.lgo --load-binary hello.p24@0x010000 \
+          --terminal --speed 0 -n 50000000
 ```
 
 ## cor24-dbg — Interactive debugger
@@ -135,7 +160,8 @@ No binary files are involved.
 msp430-to-cor24 demo.msp430.s -o demo.cor24.s --entry start
 
 # Step 2: Assemble + run the COR24 .s file
-cor24-run --run demo.cor24.s --dump
+cor24-asm demo.cor24.s -o demo.cor24.lgo
+cor24-emu --lgo demo.cor24.lgo --dump
 ```
 
 The translator reads the MSP430 `.s` file, writes a COR24 `.s` file.
@@ -171,8 +197,11 @@ cp target/msp430-none-elf/release/deps/*.s demo_fibonacci.msp430.s
 # Step 2: MSP430 → COR24 assembly (text file to text file)
 msp430-to-cor24 demo_fibonacci.msp430.s -o demo_fibonacci.cor24.s
 
-# Step 3: Assemble COR24 .s + run in emulator
-cor24-run --run demo_fibonacci.cor24.s --dump --trace 50
+# Step 3: Assemble COR24 .s -> .lgo
+cor24-asm demo_fibonacci.cor24.s -o demo_fibonacci.lgo
+
+# Step 4: Run in emulator
+cor24-emu --lgo demo_fibonacci.lgo --dump --trace 50
 ```
 
 ### Intermediate files
@@ -183,7 +212,7 @@ All intermediate files are human-readable text:
 src/lib.rs                    ← Rust source (you write this)
 demo_fibonacci.msp430.s       ← MSP430 assembly (rustc produces this)
 demo_fibonacci.cor24.s        ← COR24 assembly (translator produces this)
-                              ← No binary file — cor24-run assembles in memory
+demo_fibonacci.lgo            ← Load-and-go text (cor24-asm produces this)
 ```
 
 ### What the translator does

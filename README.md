@@ -91,26 +91,33 @@ rust-to-cor24/demos/run-demo.sh demo_echo_v2 --uart-input 'hello!'
 
 For an overview of all the binaries and how they fit together, see **[docs/eli5.md](docs/eli5.md)**.
 
-## cor24-run CLI
+## cor24-emu CLI
 
-`cor24-run` assembles `.s` files, runs them on the emulator, and supports loading pre-assembled binaries. See `cor24-run -h` for all options or [docs/cli-tools.md](docs/cli-tools.md) for full documentation.
+`cor24-emu` runs pre-built `.lgo` programs on the emulator and loads
+arbitrary binaries at fixed addresses. Assembly (`.s` → `.lgo`/`.bin`/`.lst`)
+is the job of [`cor24-asm`](https://github.com/softwarewrighter/sw-cor24-x-assembler);
+this binary is a pure runtime consumer. See `cor24-emu -h` or
+[docs/cli-tools.md](docs/cli-tools.md) for full documentation.
 
 ```bash
-# Assemble and run
-cor24-run --run prog.s --dump --speed 0
+# Two-step assemble + run
+cor24-asm prog.s -o prog.lgo
+cor24-emu --lgo prog.lgo --dump --speed 0
 
 # Interactive terminal mode (stdin/stdout bridged to UART)
-cor24-run --run repl.s --terminal --echo --speed 0
+cor24-asm repl.s -o repl.lgo
+cor24-emu --lgo repl.lgo --terminal --echo --speed 0
 
-# Assemble to binary at a base address
-cor24-run --assemble lib.s lib.bin lib.lst --base-addr 0x010000
+# Standalone listing + binary (no run)
+cor24-asm lib.s -o lib.lgo --bin lib.bin --listing lib.lst
 
 # Load pre-assembled binaries (no assembly step)
-cor24-run --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 \
+cor24-emu --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 \
           --patch 0x09D7=0x010000 --entry 0 --terminal
 
 # Set button S2 state for testing
-cor24-run --run button_test.s --switch on --dump
+cor24-asm button_test.s -o /tmp/button_test.lgo
+cor24-emu --lgo /tmp/button_test.lgo --switch on --dump
 ```
 
 ## Building
