@@ -5,40 +5,78 @@
 //! SELN is low, mode 0 (CPOL=0, CPHA=0): master sets MOSI on the
 //! falling edge, slave samples on the rising edge.
 //!
-//! State accumulates the master's MOSI byte (MSB-first) and exposes
-//! the slave-driven MISO byte for the same 8-bit exchange. With no
-//! `SpiDevice` attached yet (Phase C.4), `shift_out` stays 0 and the
-//! master always reads 0x00 back.
+//! The bus accumulates the master's MOSI byte (MSB-first) and tracks
+//! the slave-driven byte for the same 8-bit exchange. With a
+//! `SpiDevice` attached, the device's `on_select` pre-loads the byte
+//! to drive on MISO during the first exchange after CS goes low; on
+//! each byte completion `on_byte(mosi)` returns the byte to drive
+//! during the next exchange (one-byte echo delay — the slave needed
+//! to know what to send before the master clocked bit 0).
 //!
 //! `step()` is called from `state.rs::write_io` after every SPI MMIO
 //! write, so the bus advances on SCLK / SELN edges *and* on MOSI bit
 //! updates (the latter is just a level update, never a transition).
 
+use std::fmt;
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+use crate::peripherals::spi::device::SpiDevice;
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SpiBusState {
     /// Last SCLK level seen (used for rising/falling edge detection).
     pub last_sclk: bool,
-    /// Last SELN level seen (active-low; used for deselect-edge reset).
+    /// Last SELN level seen (active-low; used for select/deselect-edge
+    /// detection).
     pub last_seln: bool,
     /// Bits accumulated in the current MOSI byte, MSB-first. Cleared
     /// when a byte completes or when SELN rises mid-byte.
     pub shift_in: u8,
-    /// Bits the slave is driving on MISO, MSB-first. Stays 0 until a
-    /// `SpiDevice` is attached and pre-loads it on byte boundaries.
+    /// Bits the slave is driving on MISO, MSB-first. Pre-loaded on
+    /// SELN falling and on each byte completion from the attached
+    /// `SpiDevice`. Stays 0 with no device attached.
     pub shift_out: u8,
     /// Bits collected in the current byte (0..=7 mid-byte; resets to
     /// 0 on byte completion or SELN rise).
     pub bit_count: u8,
     /// Most recent fully-shifted MOSI byte.
     pub last_mosi_byte: Option<u8>,
-    /// Most recent fully-shifted MISO byte (what the slave drove
+    /// Most recent fully-shifted MISO byte (the byte the slave drove
     /// during the same 8-clock exchange).
     pub last_miso_byte: Option<u8>,
     /// Cumulative byte-exchange count — useful for smoke tests that
     /// want to confirm the bus made progress.
     pub bytes_exchanged: u32,
+    /// Byte the slave is currently driving on MISO across the
+    /// in-flight 8-clock exchange. Used to populate `last_miso_byte`
+    /// on byte completion. Loaded from `SpiDevice::on_select` when
+    /// SELN falls and from `SpiDevice::on_byte` after each completed
+    /// byte.
+    #[serde(skip)]
+    current_miso_byte: u8,
+    /// Single attached SPI slave. Plan §9 future work: multi-slave
+    /// SELN bitmask plus a per-slot device slot.
+    #[serde(skip, default)]
+    pub device: Option<Arc<Mutex<dyn SpiDevice>>>,
+}
+
+impl fmt::Debug for SpiBusState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpiBusState")
+            .field("last_sclk", &self.last_sclk)
+            .field("last_seln", &self.last_seln)
+            .field("shift_in", &self.shift_in)
+            .field("shift_out", &self.shift_out)
+            .field("bit_count", &self.bit_count)
+            .field("last_mosi_byte", &self.last_mosi_byte)
+            .field("last_miso_byte", &self.last_miso_byte)
+            .field("bytes_exchanged", &self.bytes_exchanged)
+            .field("current_miso_byte", &self.current_miso_byte)
+            .field("attached", &self.device.is_some())
+            .finish()
+    }
 }
 
 impl SpiBusState {
@@ -52,6 +90,8 @@ impl SpiBusState {
             last_mosi_byte: None,
             last_miso_byte: None,
             bytes_exchanged: 0,
+            current_miso_byte: 0,
+            device: None,
         }
     }
 
@@ -66,12 +106,27 @@ impl SpiBusState {
         let prev_sclk = self.last_sclk;
         let prev_seln = self.last_seln;
 
-        // SELN rising edge while not idle: abort mid-byte (matches real
-        // chips that drop the shift state on CS rise).
-        if seln && !prev_seln && self.bit_count != 0 {
-            self.shift_in = 0;
-            self.bit_count = 0;
+        // SELN falling edge: device gets selected. Pre-load the byte
+        // the slave wants to drive during the first 8-clock exchange.
+        if prev_seln && !seln {
+            let first = self.with_device(|d| d.on_select()).unwrap_or(0);
+            self.current_miso_byte = first;
+            self.shift_out = first;
+        }
+
+        // SELN rising edge: device gets deselected. Drop any partial
+        // byte (matches real chips that lose mid-byte shift state on
+        // CS rise) and notify the device.
+        if !prev_seln && seln {
+            if self.bit_count != 0 {
+                self.shift_in = 0;
+                self.bit_count = 0;
+            }
             self.shift_out = 0;
+            self.current_miso_byte = 0;
+            self.with_device(|d| {
+                d.on_deselect();
+            });
         }
 
         // SCLK rising edge with slave selected: sample MOSI bit, shift
@@ -82,12 +137,18 @@ impl SpiBusState {
             self.shift_out <<= 1;
             self.bit_count += 1;
             if self.bit_count == 8 {
-                self.last_mosi_byte = Some(self.shift_in);
-                self.last_miso_byte = Some(self.shift_in_to_miso_byte());
+                let mosi_byte = self.shift_in;
+                self.last_mosi_byte = Some(mosi_byte);
+                self.last_miso_byte = Some(self.current_miso_byte);
                 self.bytes_exchanged = self.bytes_exchanged.saturating_add(1);
                 self.bit_count = 0;
                 self.shift_in = 0;
-                self.shift_out = 0;
+                // Latch the next MISO byte from the device for the
+                // upcoming exchange. With no device, the slave drives
+                // 0x00.
+                let next = self.with_device(|d| d.on_byte(mosi_byte)).unwrap_or(0);
+                self.current_miso_byte = next;
+                self.shift_out = next;
             }
         }
 
@@ -95,23 +156,19 @@ impl SpiBusState {
         self.last_seln = seln;
     }
 
-    /// Reconstruct the byte the slave drove during the just-finished
-    /// 8-clock exchange. With shift_out shifted left 8 times during
-    /// the exchange (on each rising edge) the original byte is
-    /// recoverable — but for a byte-boundary observability snapshot
-    /// the simplest correct value is "0 until we have a slave"; the
-    /// SpiDevice integration in Phase C.5 reloads shift_out at byte
-    /// boundaries and tracks the pre-shift value separately.
-    fn shift_in_to_miso_byte(&self) -> u8 {
-        // No SpiDevice yet — slave drove all-zeros. Phase C.5 replaces
-        // this with the byte the device returned from on_byte().
-        0
+    /// Lock the attached device (if any) and run `f` against it.
+    /// Returns `None` if no device is attached or the lock is poisoned.
+    fn with_device<R>(&self, f: impl FnOnce(&mut dyn SpiDevice) -> R) -> Option<R> {
+        let arc = self.device.as_ref()?;
+        let mut guard = arc.lock().ok()?;
+        Some(f(&mut *guard))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::peripherals::spi::devices::echo::EchoDevice;
 
     /// Drive one bit by setting MOSI level, then pulsing SCLK 0->1->0
     /// while SELN stays at the supplied level.
@@ -121,6 +178,18 @@ mod tests {
         bus.step(false, mosi, seln, 0); // falling edge
     }
 
+    /// Send a full byte MSB-first while SELN stays low.
+    fn clock_byte(bus: &mut SpiBusState, mosi_byte: u8) {
+        for i in (0..8).rev() {
+            let bit = ((mosi_byte >> i) & 1) != 0;
+            clock_bit(bus, bit, false);
+        }
+    }
+
+    fn attach_echo(bus: &mut SpiBusState, seed: u8) {
+        bus.device = Some(Arc::new(Mutex::new(EchoDevice::new(seed))));
+    }
+
     #[test]
     fn idle_after_new() {
         let bus = SpiBusState::new();
@@ -128,6 +197,7 @@ mod tests {
         assert_eq!(bus.bytes_exchanged, 0);
         assert!(bus.last_seln, "SELN starts high (deselected)");
         assert_eq!(bus.last_mosi_byte, None);
+        assert!(bus.device.is_none());
     }
 
     #[test]
@@ -140,7 +210,7 @@ mod tests {
             clock_bit(&mut bus, bit, false);
         }
         assert_eq!(bus.last_mosi_byte, Some(0xA5));
-        assert_eq!(bus.last_miso_byte, Some(0x00)); // no device yet
+        assert_eq!(bus.last_miso_byte, Some(0x00)); // no device attached
         assert_eq!(bus.bytes_exchanged, 1);
         assert_eq!(bus.bit_count, 0);
     }
@@ -207,5 +277,49 @@ mod tests {
         assert_eq!(bus.shift_in, 0b01);
         bus.step(false, true, false, 0); // back low
         assert_eq!(bus.bit_count, 2);
+    }
+
+    #[test]
+    fn echo_returns_seed_first_then_previous_mosi() {
+        let mut bus = SpiBusState::new();
+        attach_echo(&mut bus, 0xA5);
+        bus.step(false, false, false, 0); // select → on_select returns 0xA5
+
+        // Master clocks 0x11, slave drives 0xA5 (the seed).
+        clock_byte(&mut bus, 0x11);
+        assert_eq!(bus.last_mosi_byte, Some(0x11));
+        assert_eq!(bus.last_miso_byte, Some(0xA5));
+
+        // Master clocks 0x22, slave drives 0x11 (previously latched).
+        clock_byte(&mut bus, 0x22);
+        assert_eq!(bus.last_mosi_byte, Some(0x22));
+        assert_eq!(bus.last_miso_byte, Some(0x11));
+
+        // Master clocks 0x33, slave drives 0x22.
+        clock_byte(&mut bus, 0x33);
+        assert_eq!(bus.last_mosi_byte, Some(0x33));
+        assert_eq!(bus.last_miso_byte, Some(0x22));
+
+        assert_eq!(bus.bytes_exchanged, 3);
+    }
+
+    #[test]
+    fn deselect_clears_miso_drive() {
+        let mut bus = SpiBusState::new();
+        attach_echo(&mut bus, 0xFF);
+        bus.step(false, false, false, 0); // select
+        clock_byte(&mut bus, 0x00);
+        assert_eq!(bus.last_miso_byte, Some(0xFF));
+
+        // Deselect: device's miso state in the bus should clear.
+        bus.step(false, false, true, 0);
+        assert_eq!(bus.shift_out, 0);
+        assert_eq!(bus.bit_count, 0);
+
+        // Reselect — on_select returns the latched buffer (0x00 from
+        // the previous on_byte), so first MISO byte is 0x00.
+        bus.step(false, false, false, 0);
+        clock_byte(&mut bus, 0xAA);
+        assert_eq!(bus.last_miso_byte, Some(0x00));
     }
 }

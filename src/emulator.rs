@@ -462,6 +462,38 @@ impl EmulatorCore {
         &self.cpu.io.spi
     }
 
+    /// Attach an SPI device. SPI is single-slave today (plan §9 future
+    /// work: multi-slave SELN bitmask), so attach replaces any
+    /// previously-attached device. Returns a typed `SpiHandle<D>` that
+    /// can mutate the device while the bus continues to dispatch to it.
+    pub fn attach_spi_device<D: crate::peripherals::spi::SpiDevice>(
+        &mut self,
+        dev: D,
+    ) -> crate::peripherals::spi::SpiHandle<D> {
+        use std::sync::{Arc, Mutex};
+        let typed: Arc<Mutex<D>> = Arc::new(Mutex::new(dev));
+        let erased: Arc<Mutex<dyn crate::peripherals::spi::SpiDevice>> = typed.clone();
+        self.cpu.io.spi.device = Some(erased);
+        crate::peripherals::spi::SpiHandle::new(typed)
+    }
+
+    /// Attach an already-shared SPI device (the form `build_spi_device`
+    /// produces). Used by the CLI's `--spi-device` flag where no typed
+    /// handle is needed. Replaces any previously-attached device.
+    pub fn attach_spi_device_shared(
+        &mut self,
+        dev: std::sync::Arc<std::sync::Mutex<dyn crate::peripherals::spi::SpiDevice>>,
+    ) {
+        self.cpu.io.spi.device = Some(dev);
+    }
+
+    /// Detach the attached SPI device (if any). Existing handles still
+    /// hold their `Arc` to the device, so chip-specific mutation through
+    /// `handle.with` continues to work; only the bus's slot is cleared.
+    pub fn detach_spi_devices(&mut self) {
+        self.cpu.io.spi.device = None;
+    }
+
     /// Attach an I2C device. The device's current 7-bit address is used
     /// to register it in the bus's routing table; the returned typed
     /// handle exposes mutation (`with`) and runtime address moves

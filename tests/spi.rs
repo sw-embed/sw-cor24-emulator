@@ -103,11 +103,16 @@ fn tmp125_drives_some_clocks() {
 
 #[test]
 fn tmp125_exchanges_bytes() {
-    // Phase C.3 wires the shift register to write_io. After running
+    // Phase C.3 wired the shift register to write_io. After running
     // the fixture long enough for spixchg to clock 8 bits, the bus's
     // bytes_exchanged counter must be at least 1 and last_mosi_byte
-    // must be Some(_). Without a SpiDevice attached yet, last_miso_byte
-    // is Some(0) (slave drives all-zeros).
+    // must be Some(_).
+    //
+    // Phase C.4 (this step) introduced device dispatch. The fixture
+    // here doesn't attach a device, so last_miso_byte is Some(0) —
+    // but with a slave attached it would be the slave-driven byte.
+    // Assert is_some() so the e2e harness in Phase C.5 stays
+    // compatible with an attached TMP125 device returning non-zero.
     let mut core = load_fixture();
     core.resume();
     let _ = core.run_batch(50_000);
@@ -122,9 +127,69 @@ fn tmp125_exchanges_bytes() {
         spi.last_mosi_byte.is_some(),
         "expected last_mosi_byte to be set after a byte exchange",
     );
-    assert_eq!(
-        spi.last_miso_byte,
-        Some(0),
-        "no SpiDevice yet; slave drives 0",
+    assert!(
+        spi.last_miso_byte.is_some(),
+        "expected last_miso_byte to be set after a byte exchange",
     );
+}
+
+#[test]
+fn echo_device_observes_mosi_through_emulator() {
+    // Synthetic-bus E2E: attach an EchoDevice, hand-drive SCLK / SELN
+    // / DATA from outside the CPU, and assert the bus's MISO byte
+    // sequence matches the echo pattern (seed → previous MOSI byte
+    // each subsequent exchange). Mirrors the i2c
+    // `add1_full_write_then_read_cycle` synthetic-bus pattern.
+    use cor24_emulator::peripherals::spi::EchoDevice;
+
+    const IO_SPI_SCLK: u32 = 0xFF0031;
+    const IO_SPI_SELN: u32 = 0xFF0032;
+
+    let mut core = EmulatorCore::new();
+    let _handle = core.attach_spi_device(EchoDevice::new(0xC3));
+
+    // Idle high; select.
+    core.write_byte(IO_SPI_SELN, 1);
+    core.write_byte(IO_SPI_SCLK, 0);
+    core.write_byte(IO_SPI_SELN, 0);
+
+    // Clock byte 0x11. EchoDevice on_select returned 0xC3 → expect
+    // last_miso_byte = Some(0xC3).
+    clock_byte(&mut core, 0x11);
+    let spi = core.spi();
+    assert_eq!(spi.last_mosi_byte, Some(0x11));
+    assert_eq!(spi.last_miso_byte, Some(0xC3));
+
+    // Clock byte 0x22. on_byte(0x11) returned 0x11 (echo of last
+    // MOSI), but the last_miso_byte for the just-finished exchange
+    // is still the byte the slave was driving across that exchange.
+    // After clocking 0x22, last_miso_byte should be 0x11 (the byte
+    // latched into shift_out at the start of this exchange).
+    clock_byte(&mut core, 0x22);
+    let spi = core.spi();
+    assert_eq!(spi.last_mosi_byte, Some(0x22));
+    assert_eq!(spi.last_miso_byte, Some(0x11));
+
+    // Clock byte 0x33. last_miso_byte = 0x22 (echo of previous MOSI).
+    clock_byte(&mut core, 0x33);
+    let spi = core.spi();
+    assert_eq!(spi.last_mosi_byte, Some(0x33));
+    assert_eq!(spi.last_miso_byte, Some(0x22));
+
+    // Deselect.
+    core.write_byte(IO_SPI_SCLK, 0);
+    core.write_byte(IO_SPI_SELN, 1);
+}
+
+/// Drive one SPI byte through the emulator's MMIO interface, MSB-first.
+/// SELN is assumed to already be low; SCLK starts low.
+fn clock_byte(core: &mut EmulatorCore, mosi_byte: u8) {
+    const IO_SPI_DATA: u32 = 0xFF0030;
+    const IO_SPI_SCLK: u32 = 0xFF0031;
+    for i in (0..8).rev() {
+        let bit = (mosi_byte >> i) & 1;
+        core.write_byte(IO_SPI_DATA, bit);
+        core.write_byte(IO_SPI_SCLK, 1);
+        core.write_byte(IO_SPI_SCLK, 0);
+    }
 }
