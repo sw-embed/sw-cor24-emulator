@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 1,
+    "step": "spi-import-tmp125-fixture"
+  },
+  "action": "cp work/research/i2cspi/i2cspi/tmp125 -> examples/spi/tmp125; rewrote libspi.c (ANSI), libspi.h (ANSI prototypes), tmp125.c (printtemp + brace-empty-loop). New Makefile (tc24r + cat ordering + cor24-asm). git mv rebuild-i2c-fixtures.sh -> rebuild-fixtures.sh; added cor24-asm-on-PATH guard and spi/* loop. Edited examples/i2c/tmp101/Makefile (cor24-run --assemble -> cor24-asm). cargo test/clippy.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-08T08:33:51"
+}

@@ -1,6 +1,6 @@
 number = 1
 slug = "spi-import-tmp125-fixture"
-status = "in-progress"
+status = "completed"
 description = """
 Phase C.0 — Import tmp125 SPI demo + fix tmp101 Makefile drive-by.
 
@@ -8,5 +8,6 @@ Mirror ..."""
 role = "production"
 context_files = []
 created_at = "2026-05-07T18:58:35"
+completed_at = "2026-05-08T08:33:51"
 task_type = "rust-feature"
-commits = []
+commits = ["2d29cdc5b487888c732ab455559bd249a884d884"]
