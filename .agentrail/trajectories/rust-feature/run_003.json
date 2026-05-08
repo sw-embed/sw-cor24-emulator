@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 3,
+    "step": "spi-master-line-state"
+  },
+  "action": "Edited src/cpu/state.rs: IoState struct gets 3 new fields, IoState::new() initialiser, read_io match arms, write_io match arms. Reworded a doc comment to avoid rustdoc parsing it as a list-item continuation. Upgraded test_spi_mmio_reads_zero_at_stub -> test_spi_idle_state_after_reset and test_spi_mmio_writes_are_noops_at_stub -> test_spi_master_line_roundtrip. Added tmp125_drives_some_clocks in tests/spi.rs (sampling stride tuned to catch mid-bit-cycle transitions, since the post-spixchg delay loop pins SCLK at its last value).",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-08T10:59:08"
+}
