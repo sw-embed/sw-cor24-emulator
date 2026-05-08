@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 6,
+    "step": "spi-tmp125-device"
+  },
+  "action": "Wrote src/peripherals/spi/devices/tmp125.rs (Tmp125Device + Tmp125HandleExt + 7 unit tests). Updated devices/mod.rs and spi/mod.rs to re-export. Added tmp125 arm to build_spi_device + 4 registry tests. Modified src/cpu/spi_bus.rs to capture last_miso_bit on rising edges (before shift) and on SELN edges. Modified src/cpu/state.rs IO_SPI_DATA read to return last_miso_bit; updated test_spi_master_line_roundtrip and test_spi_idle_state_after_reset for new semantics. Added 2 e2e tests in tests/spi.rs mirroring i2c tmp101 pattern. cargo test --workspace and cargo clippy --workspace --all-targets both pass.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-08T14:21:05"
+}

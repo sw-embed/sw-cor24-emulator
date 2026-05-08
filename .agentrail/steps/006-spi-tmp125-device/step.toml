@@ -1,6 +1,6 @@
 number = 6
 slug = "spi-tmp125-device"
-status = "pending"
+status = "completed"
 description = """
 Phase C.5 — TMP125 SPI device (mirror of I2C B.2: TMP101).
 
@@ -8,5 +8,6 @@ Plan ref: docs/..."""
 role = "legacy"
 context_files = []
 created_at = "2026-05-08T14:06:31"
+completed_at = "2026-05-08T14:21:05"
 task_type = "rust-feature"
-commits = []
+commits = ["e53da9f51e2060da733ad368c76bcfad3c36e2f8"]
