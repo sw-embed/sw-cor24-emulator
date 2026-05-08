@@ -39,6 +39,16 @@ pub const IO_INTENABLE: u32 = 0xFF0010;
 pub const IO_I2C_SCL: u32 = 0xFF0020;
 /// I2C SDA line register: same semantics as `IO_I2C_SCL`.
 pub const IO_I2C_SDA: u32 = 0xFF0021;
+/// SPI data register: write the byte to be shifted out on MOSI; read
+/// the byte shifted in on MISO. Stub today (returns 0 / no-op) — the
+/// shift-register state and slave dispatch land in later saga steps.
+pub const IO_SPI_DATA: u32 = 0xFF0030;
+/// SPI clock line: master writes bit 0 to drive SCLK. Stub today.
+pub const IO_SPI_SCLK: u32 = 0xFF0031;
+/// SPI slave-select line: master writes bit 0 (active-low) to select
+/// device 0. Stub today; multi-slave bitmask arrives if/when needed
+/// (plan §9 open question).
+pub const IO_SPI_SELN: u32 = 0xFF0032;
 /// UART data register: write to transmit, read to receive (auto-acknowledges RX)
 pub const IO_UARTDATA: u32 = 0xFF0100;
 /// UART status register:
@@ -575,6 +585,10 @@ impl CpuState {
             // (no clock stretching yet).
             IO_I2C_SCL => self.io.master_scl as u8,
             IO_I2C_SDA => (self.io.master_sda && !self.io.i2c.slave_sda_pull) as u8,
+            // SPI stub: no bus state machine yet; reads return 0.
+            // IO_SPI_DATA will return slave_miso once the shift register
+            // and device dispatch land (Phase C.3 / C.5 of the saga).
+            IO_SPI_DATA | IO_SPI_SCLK | IO_SPI_SELN => 0,
             IO_UARTDATA => self.io.uart_rx,
             IO_UARTSTAT => {
                 let mut status = 0u8;
@@ -631,6 +645,11 @@ impl CpuState {
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
                 self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
             }
+            // SPI stub: writes are no-ops at this saga step. Master
+            // line state (master_mosi / master_sclk / master_seln)
+            // arrives in Phase C.2; the shift-register bus model in
+            // C.3; device dispatch in C.5.
+            IO_SPI_DATA | IO_SPI_SCLK | IO_SPI_SELN => {}
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {
                     // Write while busy — character dropped (hardware would ignore)
@@ -1240,5 +1259,28 @@ mod tests {
         assert_eq!(cpu.read_byte(IO_I2C_SCL), 0);
         cpu.write_byte(IO_I2C_SDA, 0xFF);
         assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
+    }
+
+    #[test]
+    fn test_spi_mmio_reads_zero_at_stub() {
+        let cpu = CpuState::new();
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 0);
+    }
+
+    #[test]
+    fn test_spi_mmio_writes_are_noops_at_stub() {
+        let mut cpu = CpuState::new();
+        // Writes must not crash; reads still return 0 since this is
+        // the stub pre-master-line-state.
+        for v in [0, 1, 0xFF] {
+            cpu.write_byte(IO_SPI_DATA, v);
+            cpu.write_byte(IO_SPI_SCLK, v);
+            cpu.write_byte(IO_SPI_SELN, v);
+        }
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 0);
     }
 }
