@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 1,
+    "step": "audit-and-test-baseline"
+  },
+  "action": "cargo test --workspace; cor24-emu --help; git grep -nE -- --run|--assemble; cor24-asm smoke. Archived cor24-rs via agentrail archive. Initialised remove-internal-assembler saga via agentrail init. Wrote and committed baseline doc.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-06T22:46:01"
+}
