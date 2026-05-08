@@ -3,5 +3,7 @@
 //! `registry::build_spi_device`.
 
 pub mod echo;
+pub mod tmp125;
 
 pub use echo::EchoDevice;
+pub use tmp125::{Tmp125Device, Tmp125HandleExt};

@@ -602,11 +602,13 @@ impl CpuState {
             // (no clock stretching yet).
             IO_I2C_SCL => self.io.master_scl as u8,
             IO_I2C_SDA => (self.io.master_sda && !self.io.i2c.slave_sda_pull) as u8,
-            // SPI master-line state. IO_SPI_DATA returns the last
-            // byte the master wrote to MOSI (until Phase C.3 wires the
-            // shift register, at which point it returns slave-driven
-            // MISO). SCLK / SELN are master-only in our model.
-            IO_SPI_DATA => self.io.master_mosi,
+            // SPI MISO read: returns the most recent slave-driven bit
+            // in bit 0. The bus state machine captures this on each
+            // SCLK rising edge from the MSB of shift_out, matching
+            // when the master would sample MISO. SCLK / SELN are
+            // master-only in our model and read back as their last
+            // driven level.
+            IO_SPI_DATA => self.io.spi.last_miso_bit as u8,
             IO_SPI_SCLK => self.io.master_sclk as u8,
             IO_SPI_SELN => self.io.master_seln as u8,
             IO_UARTDATA => self.io.uart_rx,
@@ -1310,8 +1312,9 @@ mod tests {
     #[test]
     fn test_spi_idle_state_after_reset() {
         let cpu = CpuState::new();
-        // MOSI byte starts 0; SCLK starts low; SELN starts high
-        // (active-low: 1 = nothing selected).
+        // No clocks have ticked: MISO read returns the captured MISO
+        // bit (0). SCLK starts low; SELN starts high (active-low: 1 =
+        // nothing selected).
         assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
         assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
         assert_eq!(cpu.read_byte(IO_SPI_SELN), 1);
@@ -1321,11 +1324,17 @@ mod tests {
     fn test_spi_master_line_roundtrip() {
         let mut cpu = CpuState::new();
 
-        // Full byte round-trips on IO_SPI_DATA.
+        // IO_SPI_DATA writes set MOSI; reads return the most recently
+        // sampled MISO bit. With no SCLK rises (and no slave attached),
+        // reads stay at 0. Writes still persist the master's MOSI
+        // byte for the next clocked exchange — verified via the bus
+        // state below rather than through a write/read round-trip.
         cpu.write_byte(IO_SPI_DATA, 0xA5);
-        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0xA5);
+        assert_eq!(cpu.io.master_mosi, 0xA5);
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
         cpu.write_byte(IO_SPI_DATA, 0x00);
-        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0x00);
+        assert_eq!(cpu.io.master_mosi, 0x00);
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
 
         // SCLK / SELN persist the low bit.
         cpu.write_byte(IO_SPI_SCLK, 1);

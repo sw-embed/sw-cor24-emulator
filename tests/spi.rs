@@ -11,6 +11,7 @@
 //! e2e test will assert deterministic UART output (`"DD.DD\n"`) for a
 //! configured temperature.
 
+use cor24_emulator::peripherals::spi::{Tmp125Device, Tmp125HandleExt};
 use cor24_emulator::{EmulatorCore, StopReason};
 
 const TMP125_LGO: &str = concat!(
@@ -192,4 +193,42 @@ fn clock_byte(core: &mut EmulatorCore, mosi_byte: u8) {
         core.write_byte(IO_SPI_SCLK, 1);
         core.write_byte(IO_SPI_SCLK, 0);
     }
+}
+
+#[test]
+fn tmp125_lgo_prints_configured_temperature() {
+    // Plan §7 layer-3 e2e: load tmp125.lgo, attach a Tmp125 device
+    // configured to 25.0°C, run, expect "25.00\n" in the UART. This
+    // exercises the entire SPI stack — libspi bit-banging via spixchg,
+    // bus state machine with MISO bit capture, Tmp125 register
+    // synthesis, and the demo's hand-rolled printf — and is the
+    // single most important test for this saga.
+    let mut core = load_fixture();
+    let h = core.attach_spi_device(Tmp125Device::new());
+    h.set_temperature(25.0);
+
+    core.resume();
+    let _ = core.run_batch(2_000_000);
+
+    let out = core.get_uart_output();
+    assert!(
+        out.contains("25.00\n"),
+        "expected '25.00\\n' in UART output, got {out:?}",
+    );
+}
+
+#[test]
+fn tmp125_lgo_prints_negative_temperature() {
+    let mut core = load_fixture();
+    let h = core.attach_spi_device(Tmp125Device::new());
+    h.set_temperature(-12.5);
+
+    core.resume();
+    let _ = core.run_batch(2_000_000);
+
+    let out = core.get_uart_output();
+    assert!(
+        out.contains("-12.50\n"),
+        "expected '-12.50\\n' in UART output, got {out:?}",
+    );
 }

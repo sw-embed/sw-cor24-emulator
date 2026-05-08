@@ -49,6 +49,12 @@ pub struct SpiBusState {
     /// Cumulative byte-exchange count — useful for smoke tests that
     /// want to confirm the bus made progress.
     pub bytes_exchanged: u32,
+    /// Most recently sampled MISO line bit. Captured on each SCLK
+    /// rising edge from the MSB of `shift_out` *before* the shift —
+    /// i.e., the bit the slave was driving during the high phase, the
+    /// bit the master would sample. Read by the CPU through bit 0 of
+    /// `IO_SPI_DATA`. Cleared on SELN rise.
+    pub last_miso_bit: bool,
     /// Byte the slave is currently driving on MISO across the
     /// in-flight 8-clock exchange. Used to populate `last_miso_byte`
     /// on byte completion. Loaded from `SpiDevice::on_select` when
@@ -73,6 +79,7 @@ impl fmt::Debug for SpiBusState {
             .field("last_mosi_byte", &self.last_mosi_byte)
             .field("last_miso_byte", &self.last_miso_byte)
             .field("bytes_exchanged", &self.bytes_exchanged)
+            .field("last_miso_bit", &self.last_miso_bit)
             .field("current_miso_byte", &self.current_miso_byte)
             .field("attached", &self.device.is_some())
             .finish()
@@ -90,6 +97,7 @@ impl SpiBusState {
             last_mosi_byte: None,
             last_miso_byte: None,
             bytes_exchanged: 0,
+            last_miso_bit: false,
             current_miso_byte: 0,
             device: None,
         }
@@ -108,10 +116,13 @@ impl SpiBusState {
 
         // SELN falling edge: device gets selected. Pre-load the byte
         // the slave wants to drive during the first 8-clock exchange.
+        // The MSB is what the slave will drive on MISO before the
+        // master's first SCLK rise.
         if prev_seln && !seln {
             let first = self.with_device(|d| d.on_select()).unwrap_or(0);
             self.current_miso_byte = first;
             self.shift_out = first;
+            self.last_miso_bit = (first >> 7) & 1 != 0;
         }
 
         // SELN rising edge: device gets deselected. Drop any partial
@@ -124,15 +135,18 @@ impl SpiBusState {
             }
             self.shift_out = 0;
             self.current_miso_byte = 0;
+            self.last_miso_bit = false;
             self.with_device(|d| {
                 d.on_deselect();
             });
         }
 
         // SCLK rising edge with slave selected: sample MOSI bit, shift
-        // it in MSB-first. Shift the MISO register left by 1 too so
-        // the next bit out is at the MSB position.
+        // it in MSB-first. Capture the MISO bit being driven (MSB of
+        // shift_out) *before* shifting — that's the bit the master
+        // samples right after pulling SCLK high.
         if !seln && sclk && !prev_sclk {
+            self.last_miso_bit = (self.shift_out >> 7) & 1 != 0;
             self.shift_in = (self.shift_in << 1) | (mosi_bit as u8);
             self.shift_out <<= 1;
             self.bit_count += 1;
@@ -145,7 +159,8 @@ impl SpiBusState {
                 self.shift_in = 0;
                 // Latch the next MISO byte from the device for the
                 // upcoming exchange. With no device, the slave drives
-                // 0x00.
+                // 0x00. The MSB becomes the bit the slave will drive
+                // before the next SCLK rise.
                 let next = self.with_device(|d| d.on_byte(mosi_byte)).unwrap_or(0);
                 self.current_miso_byte = next;
                 self.shift_out = next;
