@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 1,
+    "step": "extract-isa"
+  },
+  "action": "git clone /disk1/.../bare/sw-cor24-isa.git as sibling; cut pr/extract-isa from dev; archived prior saga; edited workspace Cargo.toml (members + dep path); git rm -r isa/; cargo build/test/clippy/smoke gates; committed with the brief-spec message.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-07T18:54:59"
+}

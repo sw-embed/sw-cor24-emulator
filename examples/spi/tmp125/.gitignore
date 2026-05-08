@@ -1,0 +1,6 @@
+# Build intermediates — only spixchg.s (hand-written) and the .lgo
+# fixture are committed; everything else is regenerable via `make`.
+tmp125_main.s
+tmp125.s
+*.bin
+*.lst
