@@ -212,6 +212,16 @@ pub struct IoState {
     pub master_sda: bool,
     /// I2C bus protocol state — phase, addressing, edge-detection memory.
     pub i2c: crate::cpu::i2c_bus::I2cBusState,
+    /// SPI MOSI byte as last written by the master to `IO_SPI_DATA`.
+    /// Reads of `IO_SPI_DATA` return this value until the shift
+    /// register and slave dispatch land (Phase C.3 / C.5), at which
+    /// point reads will return the slave-driven MISO byte.
+    pub master_mosi: u8,
+    /// SPI SCLK line as last driven by the master.
+    pub master_sclk: bool,
+    /// SPI SELN line as last driven by the master (active-low: true =
+    /// deselected, false = device 0 selected).
+    pub master_seln: bool,
 }
 
 impl IoState {
@@ -234,6 +244,9 @@ impl IoState {
             master_scl: true, // both I2C lines released high at reset
             master_sda: true,
             i2c: crate::cpu::i2c_bus::I2cBusState::new(),
+            master_mosi: 0,    // idle: no byte staged
+            master_sclk: false, // SPI mode 0 idle clock
+            master_seln: true, // active-low: 1 = no slave selected
         }
     }
 }
@@ -585,10 +598,13 @@ impl CpuState {
             // (no clock stretching yet).
             IO_I2C_SCL => self.io.master_scl as u8,
             IO_I2C_SDA => (self.io.master_sda && !self.io.i2c.slave_sda_pull) as u8,
-            // SPI stub: no bus state machine yet; reads return 0.
-            // IO_SPI_DATA will return slave_miso once the shift register
-            // and device dispatch land (Phase C.3 / C.5 of the saga).
-            IO_SPI_DATA | IO_SPI_SCLK | IO_SPI_SELN => 0,
+            // SPI master-line state. IO_SPI_DATA returns the last
+            // byte the master wrote to MOSI (until Phase C.3 wires the
+            // shift register, at which point it returns slave-driven
+            // MISO). SCLK / SELN are master-only in our model.
+            IO_SPI_DATA => self.io.master_mosi,
+            IO_SPI_SCLK => self.io.master_sclk as u8,
+            IO_SPI_SELN => self.io.master_seln as u8,
             IO_UARTDATA => self.io.uart_rx,
             IO_UARTSTAT => {
                 let mut status = 0u8;
@@ -645,11 +661,20 @@ impl CpuState {
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
                 self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
             }
-            // SPI stub: writes are no-ops at this saga step. Master
-            // line state (master_mosi / master_sclk / master_seln)
-            // arrives in Phase C.2; the shift-register bus model in
-            // C.3; device dispatch in C.5.
-            IO_SPI_DATA | IO_SPI_SCLK | IO_SPI_SELN => {}
+            // SPI master-line drivers. The shift-register bus model
+            // (Phase C.3) hooks into IO_SPI_SCLK to advance bit-state
+            // on rising edges; device dispatch (C.5) consumes the
+            // accumulated 8-bit MOSI byte and drives MISO. For now
+            // we just persist what the master wrote.
+            IO_SPI_DATA => {
+                self.io.master_mosi = value;
+            }
+            IO_SPI_SCLK => {
+                self.io.master_sclk = (value & 1) != 0;
+            }
+            IO_SPI_SELN => {
+                self.io.master_seln = (value & 1) != 0;
+            }
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {
                     // Write while busy — character dropped (hardware would ignore)
@@ -1262,25 +1287,40 @@ mod tests {
     }
 
     #[test]
-    fn test_spi_mmio_reads_zero_at_stub() {
+    fn test_spi_idle_state_after_reset() {
         let cpu = CpuState::new();
+        // MOSI byte starts 0; SCLK starts low; SELN starts high
+        // (active-low: 1 = nothing selected).
         assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
         assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
-        assert_eq!(cpu.read_byte(IO_SPI_SELN), 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 1);
     }
 
     #[test]
-    fn test_spi_mmio_writes_are_noops_at_stub() {
+    fn test_spi_master_line_roundtrip() {
         let mut cpu = CpuState::new();
-        // Writes must not crash; reads still return 0 since this is
-        // the stub pre-master-line-state.
-        for v in [0, 1, 0xFF] {
-            cpu.write_byte(IO_SPI_DATA, v);
-            cpu.write_byte(IO_SPI_SCLK, v);
-            cpu.write_byte(IO_SPI_SELN, v);
-        }
-        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
+
+        // Full byte round-trips on IO_SPI_DATA.
+        cpu.write_byte(IO_SPI_DATA, 0xA5);
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0xA5);
+        cpu.write_byte(IO_SPI_DATA, 0x00);
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0x00);
+
+        // SCLK / SELN persist the low bit.
+        cpu.write_byte(IO_SPI_SCLK, 1);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 1);
+        cpu.write_byte(IO_SPI_SCLK, 0);
         assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
+
+        cpu.write_byte(IO_SPI_SELN, 0);
         assert_eq!(cpu.read_byte(IO_SPI_SELN), 0);
+        cpu.write_byte(IO_SPI_SELN, 1);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 1);
+
+        // Only the low bit matters for SCLK / SELN drivers.
+        cpu.write_byte(IO_SPI_SCLK, 0xFE);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
+        cpu.write_byte(IO_SPI_SELN, 0xFF);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 1);
     }
 }

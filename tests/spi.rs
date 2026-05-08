@@ -38,10 +38,9 @@ fn tmp125_fixture_loads() {
 #[test]
 fn tmp125_runs_with_stub_mmio() {
     // No SPI bus state machine yet — the guest's spixchg loop reads
-    // back whatever it last wrote to the SCLK / SELN MMIO addresses
-    // (which today are unmapped and read 0). The CPU should stay alive
-    // for at least 100k instructions: not halt, not trip stack guards,
-    // not execute an invalid opcode.
+    // back whatever it last wrote to the SCLK / SELN MMIO addresses.
+    // The CPU should stay alive for at least 100k instructions: not
+    // halt, not trip stack guards, not execute an invalid opcode.
     let mut core = load_fixture();
     core.resume();
     let result = core.run_batch(100_000);
@@ -54,4 +53,50 @@ fn tmp125_runs_with_stub_mmio() {
         result.instructions_run,
     );
     assert_eq!(result.instructions_run, 100_000);
+}
+
+#[test]
+fn tmp125_drives_some_clocks() {
+    // After Phase C.2 the master-line state persists writes, so
+    // running the fixture for a while should cover both edges of the
+    // SCLK line at least once. Confirms the spixchg loop is making
+    // bus progress.
+    //
+    // Sample at fine granularity early in the run — spixchg takes
+    // ~24 instructions per bit × 8 bits, so a 4-instruction stride
+    // catches mid-bit-cycle states where SCLK has just been driven
+    // 0 and not yet driven 1 again. After spixchg completes the
+    // demo enters a 16M-iter delay loop with SCLK pinned at whatever
+    // it was last; sampling there alone would miss the low half.
+    const IO_SPI_SCLK: u32 = 0xFF0031;
+    const IO_SPI_SELN: u32 = 0xFF0032;
+
+    let mut core = load_fixture();
+    core.resume();
+
+    let mut saw_sclk_high = false;
+    let mut saw_sclk_low = false;
+    let mut saw_seln_low = false; // active-low: low = selected
+
+    for _ in 0..1_500 {
+        core.run_batch(4);
+        if core.read_byte(IO_SPI_SCLK) == 1 {
+            saw_sclk_high = true;
+        } else {
+            saw_sclk_low = true;
+        }
+        if core.read_byte(IO_SPI_SELN) == 0 {
+            saw_seln_low = true;
+        }
+        if saw_sclk_high && saw_sclk_low && saw_seln_low {
+            return; // early-out: all observations satisfied
+        }
+    }
+
+    assert!(saw_sclk_low, "expected SCLK to be observed low at least once");
+    assert!(saw_sclk_high, "expected SCLK to be observed high at least once");
+    assert!(
+        saw_seln_low,
+        "expected SELN to be driven low (slave selected) at least once"
+    );
 }
