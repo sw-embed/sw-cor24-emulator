@@ -1,6 +1,6 @@
 number = 1
 slug = "extract-isa"
-status = "in-progress"
+status = "completed"
 description = """
 Extract isa/ workspace member into the standalone sw-cor24-isa repo.
 
@@ -8,5 +8,6 @@ Brief: ..."""
 role = "production"
 context_files = []
 created_at = "2026-05-07T18:46:56"
+completed_at = "2026-05-07T18:54:59"
 task_type = "rust-feature"
-commits = []
+commits = ["1a834e7871561b52119d619dc2a0ffecb06aec4f"]
