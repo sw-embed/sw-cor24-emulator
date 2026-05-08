@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "cli", "isa"]
+members = [".", "cli"]
 resolver = "2"
 
 [package]
@@ -14,7 +14,7 @@ description = "COR24 C-Oriented RISC 24-bit Assembly Emulator"
 crate-type = ["rlib"]
 
 [dependencies]
-cor24-isa = { path = "./isa", features = ["serde"] }
+cor24-isa = { path = "../sw-cor24-isa", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
