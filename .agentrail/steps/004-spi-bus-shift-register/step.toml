@@ -1,6 +1,6 @@
 number = 4
 slug = "spi-bus-shift-register"
-status = "pending"
+status = "completed"
 description = """
 Phase C.3 — SPI shift-register state machine.
 
@@ -8,5 +8,6 @@ Mirror of I2C step 004 i2c-b..."""
 role = "legacy"
 context_files = []
 created_at = "2026-05-08T10:59:08"
+completed_at = "2026-05-08T11:15:46"
 task_type = "rust-feature"
-commits = []
+commits = ["f242deed1c70046298f45bc5187345320dc4e121"]

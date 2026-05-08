@@ -1,0 +1,11 @@
+{
+  "task_type": "rust-feature",
+  "state": {
+    "number": 4,
+    "step": "spi-bus-shift-register"
+  },
+  "action": "Wrote src/cpu/spi_bus.rs with full state machine + unit tests; mod + use exports in src/cpu/mod.rs; IoState gains pub spi field with new() init in src/cpu/state.rs; write_io calls spi.step() on all three MMIO addresses; EmulatorCore::spi() in src/emulator.rs; new tests/spi.rs::tmp125_exchanges_bytes.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-08T11:15:46"
+}

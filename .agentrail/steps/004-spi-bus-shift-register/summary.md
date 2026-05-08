@@ -1,0 +1,1 @@
+Wrote src/cpu/spi_bus.rs (SpiBusState struct + step + 6 unit tests). Wired into IoState (pub spi field), driven from write_io for all three SPI MMIO addresses, exposed via EmulatorCore::spi(). tests/spi.rs gains tmp125_exchanges_bytes asserting spi.bytes_exchanged >= 1 after running the fixture. cargo test --workspace 269 pass (+7). clippy --all-features -D warnings clean.
