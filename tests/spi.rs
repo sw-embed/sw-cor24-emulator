@@ -100,3 +100,31 @@ fn tmp125_drives_some_clocks() {
         "expected SELN to be driven low (slave selected) at least once"
     );
 }
+
+#[test]
+fn tmp125_exchanges_bytes() {
+    // Phase C.3 wires the shift register to write_io. After running
+    // the fixture long enough for spixchg to clock 8 bits, the bus's
+    // bytes_exchanged counter must be at least 1 and last_mosi_byte
+    // must be Some(_). Without a SpiDevice attached yet, last_miso_byte
+    // is Some(0) (slave drives all-zeros).
+    let mut core = load_fixture();
+    core.resume();
+    let _ = core.run_batch(50_000);
+
+    let spi = core.spi();
+    assert!(
+        spi.bytes_exchanged >= 1,
+        "expected at least one byte exchanged, got {}",
+        spi.bytes_exchanged,
+    );
+    assert!(
+        spi.last_mosi_byte.is_some(),
+        "expected last_mosi_byte to be set after a byte exchange",
+    );
+    assert_eq!(
+        spi.last_miso_byte,
+        Some(0),
+        "no SpiDevice yet; slave drives 0",
+    );
+}

@@ -222,6 +222,9 @@ pub struct IoState {
     /// SPI SELN line as last driven by the master (active-low: true =
     /// deselected, false = device 0 selected).
     pub master_seln: bool,
+    /// SPI bus shift-register state — bit count, accumulated MOSI
+    /// byte, observability counters.
+    pub spi: crate::cpu::spi_bus::SpiBusState,
 }
 
 impl IoState {
@@ -247,6 +250,7 @@ impl IoState {
             master_mosi: 0,    // idle: no byte staged
             master_sclk: false, // SPI mode 0 idle clock
             master_seln: true, // active-low: 1 = no slave selected
+            spi: crate::cpu::spi_bus::SpiBusState::new(),
         }
     }
 }
@@ -661,19 +665,36 @@ impl CpuState {
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
                 self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
             }
-            // SPI master-line drivers. The shift-register bus model
-            // (Phase C.3) hooks into IO_SPI_SCLK to advance bit-state
-            // on rising edges; device dispatch (C.5) consumes the
-            // accumulated 8-bit MOSI byte and drives MISO. For now
-            // we just persist what the master wrote.
+            // SPI master-line drivers. After persisting the master's
+            // line state, advance the shift-register state machine —
+            // it samples MOSI bit 0 on SCLK rising edges while SELN
+            // is low, and resets mid-byte on SELN rises.
             IO_SPI_DATA => {
                 self.io.master_mosi = value;
+                self.io.spi.step(
+                    self.io.master_sclk,
+                    (self.io.master_mosi & 1) != 0,
+                    self.io.master_seln,
+                    self.instructions,
+                );
             }
             IO_SPI_SCLK => {
                 self.io.master_sclk = (value & 1) != 0;
+                self.io.spi.step(
+                    self.io.master_sclk,
+                    (self.io.master_mosi & 1) != 0,
+                    self.io.master_seln,
+                    self.instructions,
+                );
             }
             IO_SPI_SELN => {
                 self.io.master_seln = (value & 1) != 0;
+                self.io.spi.step(
+                    self.io.master_sclk,
+                    (self.io.master_mosi & 1) != 0,
+                    self.io.master_seln,
+                    self.instructions,
+                );
             }
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {

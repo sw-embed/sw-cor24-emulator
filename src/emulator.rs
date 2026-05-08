@@ -456,6 +456,12 @@ impl EmulatorCore {
         &self.cpu.io.i2c
     }
 
+    /// Read-only view of the SPI bus state — bit count, last
+    /// fully-shifted MOSI/MISO bytes, bytes-exchanged counter.
+    pub fn spi(&self) -> &crate::cpu::spi_bus::SpiBusState {
+        &self.cpu.io.spi
+    }
+
     /// Attach an I2C device. The device's current 7-bit address is used
     /// to register it in the bus's routing table; the returned typed
     /// handle exposes mutation (`with`) and runtime address moves
