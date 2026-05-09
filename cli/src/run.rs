@@ -1301,6 +1301,7 @@ fn load_binaries_and_patches(
     emu: &mut EmulatorCore,
     binaries: &[(String, u32)],
     patches: &[(u32, u32)],
+    quiet: bool,
 ) {
     for (file_path, addr) in binaries {
         let data = fs::read(file_path).unwrap_or_else(|e| {
@@ -1318,21 +1319,28 @@ fn load_binaries_and_patches(
             emu.write_byte(addr + i as u32, b);
         }
         emu.load_program_extent(addr + body.len() as u32);
-        if stripped {
-            println!(
+        let msg = if stripped {
+            format!(
                 "Loaded {} bytes from '{}' at 0x{:06X} (stripped {} byte .p24 header)",
                 body.len(),
                 file_path,
                 addr,
                 P24_HEADER_SIZE
-            );
+            )
         } else {
-            println!(
+            format!(
                 "Loaded {} bytes from '{}' at 0x{:06X}",
                 body.len(),
                 file_path,
                 addr
-            );
+            )
+        };
+        // Per --help: under --quiet, UART TX is the only thing on
+        // stdout; other logs go to stderr.
+        if quiet {
+            eprintln!("{}", msg);
+        } else {
+            println!("{}", msg);
         }
     }
 
@@ -1340,7 +1348,12 @@ fn load_binaries_and_patches(
         emu.write_byte(addr, (value & 0xFF) as u8);
         emu.write_byte(addr + 1, ((value >> 8) & 0xFF) as u8);
         emu.write_byte(addr + 2, ((value >> 16) & 0xFF) as u8);
-        println!("Patched 0x{:06X} = 0x{:06X}", addr, value);
+        let msg = format!("Patched 0x{:06X} = 0x{:06X}", addr, value);
+        if quiet {
+            eprintln!("{}", msg);
+        } else {
+            println!("{}", msg);
+        }
     }
 }
 
@@ -1458,7 +1471,7 @@ fn main() {
             // matches the precedence the "binary" arm uses and the
             // help text's combined-form examples
             // (e.g. `cor24-emu --lgo pvm.lgo --load-binary hello.p24@…`).
-            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches);
+            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches, cli.quiet);
 
             attach_i2c_devices(&mut emu, &cli.i2c_devices);
 
@@ -1506,7 +1519,7 @@ fn main() {
                 emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
             }
 
-            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches);
+            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches, cli.quiet);
 
             if let Some(entry_str) = &cli.entry {
                 match parse_numeric_addr(entry_str) {
@@ -1683,7 +1696,7 @@ mod tests {
     #[test]
     fn test_patch_writes_24bit_le() {
         let mut emu = EmulatorCore::new();
-        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0x010000)]);
+        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0x010000)], false);
         assert_eq!(emu.read_byte(0x100), 0x00);
         assert_eq!(emu.read_byte(0x101), 0x00);
         assert_eq!(emu.read_byte(0x102), 0x01);
@@ -1741,7 +1754,7 @@ mod tests {
     #[test]
     fn test_patch_multiple() {
         let mut emu = EmulatorCore::new();
-        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0xABCDEF), (0x200, 0x42)]);
+        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0xABCDEF), (0x200, 0x42)], false);
         assert_eq!(emu.read_byte(0x100), 0xEF);
         assert_eq!(emu.read_byte(0x101), 0xCD);
         assert_eq!(emu.read_byte(0x102), 0xAB);
@@ -1757,6 +1770,7 @@ mod tests {
             &mut emu,
             &[(tmp.to_string_lossy().to_string(), 0x1000)],
             &[],
+            false,
         );
         assert_eq!(emu.read_byte(0x1000), 0x44);
         assert_eq!(emu.read_byte(0x1001), 0x05);
@@ -1783,6 +1797,7 @@ mod tests {
             &mut emu,
             &[(tmp.to_string_lossy().to_string(), 0x010000)],
             &[],
+            false,
         );
         assert_eq!(emu.read_byte(0x010000), 0xAA);
         assert_eq!(emu.read_byte(0x010001), 0xBB);
@@ -1869,6 +1884,7 @@ mod tests {
             &mut emu,
             &[(aux.to_string_lossy().to_string(), 0x080000)],
             &[],
+            false,
         );
         emu.resume();
         emu.run_batch(100);
@@ -1900,6 +1916,7 @@ mod tests {
                 (aux2.to_string_lossy().to_string(), 0x090000),
             ],
             &[],
+            false,
         );
 
         assert_eq!(emu.read_byte(0x080000), 0x42);
@@ -1917,7 +1934,7 @@ mod tests {
         let mut emu = EmulatorCore::new();
         emu.load_lgo(&lgo, None).expect("load_lgo");
         emu.set_pc(0);
-        load_binaries_and_patches(&mut emu, &[], &[(0x080000, 0x42)]);
+        load_binaries_and_patches(&mut emu, &[], &[(0x080000, 0x42)], false);
         emu.resume();
         emu.run_batch(100);
 
