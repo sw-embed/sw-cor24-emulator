@@ -203,14 +203,16 @@ cor24-dbg mytest.lgo
 
 ## Demo Scripts
 
-Runnable demo scripts are in `scripts/`. Each builds the debugger and runs an
-example program non-interactively:
+Runnable demo scripts are in `scripts/`. Each builds the binaries and runs
+an example program non-interactively. See [`docs/cli-demos.md`](cli-demos.md)
+for the full catalogue and per-demo notes.
 
 | Script | What it demonstrates |
 |--------|---------------------|
 | `demo-cli-hello-world.sh` | UART string output, captures output into a shell variable |
 | `demo-cli-count-down.sh` | Breakpoints, single-stepping, register inspection |
 | `demo-cli-led-blink.sh` | LED toggling, UART output from a blink loop |
+| `demo-cli-blinky-s2.sh` | D2 mirrors S2 (see [makerlisp-blinky_s2](makerlisp-blinky_s2.md)) |
 | `demo-cli-sieve.sh` | Sieve benchmark (500M instructions), UART result |
 
 ### Capturing UART output in a script
