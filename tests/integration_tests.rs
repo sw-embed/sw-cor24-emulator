@@ -145,6 +145,41 @@ fn test_led_blink() {
     assert_eq!(cpu.io.uart_output, "LLLLL", "Should print 'L' five times");
 }
 
+/// Blinky-S2: D2 LED should mirror the S2 button. Toggle S2 in a loop
+/// and verify D2 follows each press/release.
+#[test]
+fn test_blinky_s2_led_follows_switch() {
+    let content = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/programs/blinky_s2.lgo"
+    ))
+    .expect("read blinky_s2.lgo");
+    let mut cpu = CpuState::new();
+    let result = load_lgo(&content, &mut cpu).expect("load_lgo");
+    cpu.pc = result.start_addr.expect("blinky_s2.lgo missing G line");
+
+    let executor = Executor::new();
+    executor.run(&mut cpu, 50); // run startup + a few loop iterations
+
+    // Drive S2 through several press/release cycles; the loop reads
+    // FF0000 and writes the same byte back, so leds must follow switches.
+    for cycle in 0..5 {
+        cpu.io.switches = 0x00; // pressed (active-low)
+        executor.run(&mut cpu, 30);
+        assert_eq!(
+            cpu.io.leds, 0x00,
+            "cycle {cycle}: D2 should be on (0x00) while S2 pressed"
+        );
+
+        cpu.io.switches = 0x01; // released
+        executor.run(&mut cpu, 30);
+        assert_eq!(
+            cpu.io.leds, 0x01,
+            "cycle {cycle}: D2 should be off (0x01) while S2 released"
+        );
+    }
+}
+
 #[test]
 fn test_sieve() {
     let cpu = load_and_run(
