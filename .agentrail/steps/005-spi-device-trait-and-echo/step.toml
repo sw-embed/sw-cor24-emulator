@@ -1,0 +1,13 @@
+number = 5
+slug = "spi-device-trait-and-echo"
+status = "completed"
+description = """
+Phase C.4 — SpiDevice trait + echo test slave + SpiHandle.
+
+Mirror of I2C s..."""
+role = "legacy"
+context_files = []
+created_at = "2026-05-08T11:15:46"
+completed_at = "2026-05-08T14:06:31"
+task_type = "rust-feature"
+commits = ["ccb660c13ebab73bb5f82dc2ff3ae917bf79b6af"]

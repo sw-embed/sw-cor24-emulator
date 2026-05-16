@@ -39,6 +39,16 @@ pub const IO_INTENABLE: u32 = 0xFF0010;
 pub const IO_I2C_SCL: u32 = 0xFF0020;
 /// I2C SDA line register: same semantics as `IO_I2C_SCL`.
 pub const IO_I2C_SDA: u32 = 0xFF0021;
+/// SPI data register: write the byte to be shifted out on MOSI; read
+/// the byte shifted in on MISO. Stub today (returns 0 / no-op) — the
+/// shift-register state and slave dispatch land in later saga steps.
+pub const IO_SPI_DATA: u32 = 0xFF0030;
+/// SPI clock line: master writes bit 0 to drive SCLK. Stub today.
+pub const IO_SPI_SCLK: u32 = 0xFF0031;
+/// SPI slave-select line: master writes bit 0 (active-low) to select
+/// device 0. Stub today; multi-slave bitmask arrives if/when needed
+/// (plan §9 open question).
+pub const IO_SPI_SELN: u32 = 0xFF0032;
 /// UART data register: write to transmit, read to receive (auto-acknowledges RX)
 pub const IO_UARTDATA: u32 = 0xFF0100;
 /// UART status register:
@@ -202,6 +212,19 @@ pub struct IoState {
     pub master_sda: bool,
     /// I2C bus protocol state — phase, addressing, edge-detection memory.
     pub i2c: crate::cpu::i2c_bus::I2cBusState,
+    /// SPI MOSI byte as last written by the master to `IO_SPI_DATA`.
+    /// Reads of `IO_SPI_DATA` return this value until the shift
+    /// register and slave dispatch land (Phase C.3 / C.5), at which
+    /// point reads will return the slave-driven MISO byte.
+    pub master_mosi: u8,
+    /// SPI SCLK line as last driven by the master.
+    pub master_sclk: bool,
+    /// SPI SELN line as last driven by the master (active-low: true =
+    /// deselected, false = device 0 selected).
+    pub master_seln: bool,
+    /// SPI bus shift-register state — bit count, accumulated MOSI
+    /// byte, observability counters.
+    pub spi: crate::cpu::spi_bus::SpiBusState,
 }
 
 impl IoState {
@@ -224,6 +247,10 @@ impl IoState {
             master_scl: true, // both I2C lines released high at reset
             master_sda: true,
             i2c: crate::cpu::i2c_bus::I2cBusState::new(),
+            master_mosi: 0,    // idle: no byte staged
+            master_sclk: false, // SPI mode 0 idle clock
+            master_seln: true, // active-low: 1 = no slave selected
+            spi: crate::cpu::spi_bus::SpiBusState::new(),
         }
     }
 }
@@ -575,6 +602,15 @@ impl CpuState {
             // (no clock stretching yet).
             IO_I2C_SCL => self.io.master_scl as u8,
             IO_I2C_SDA => (self.io.master_sda && !self.io.i2c.slave_sda_pull) as u8,
+            // SPI MISO read: returns the most recent slave-driven bit
+            // in bit 0. The bus state machine captures this on each
+            // SCLK rising edge from the MSB of shift_out, matching
+            // when the master would sample MISO. SCLK / SELN are
+            // master-only in our model and read back as their last
+            // driven level.
+            IO_SPI_DATA => self.io.spi.last_miso_bit as u8,
+            IO_SPI_SCLK => self.io.master_sclk as u8,
+            IO_SPI_SELN => self.io.master_seln as u8,
             IO_UARTDATA => self.io.uart_rx,
             IO_UARTSTAT => {
                 let mut status = 0u8;
@@ -630,6 +666,37 @@ impl CpuState {
                 self.io.master_sda = (value & 1) != 0;
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
                 self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
+            }
+            // SPI master-line drivers. After persisting the master's
+            // line state, advance the shift-register state machine —
+            // it samples MOSI bit 0 on SCLK rising edges while SELN
+            // is low, and resets mid-byte on SELN rises.
+            IO_SPI_DATA => {
+                self.io.master_mosi = value;
+                self.io.spi.step(
+                    self.io.master_sclk,
+                    (self.io.master_mosi & 1) != 0,
+                    self.io.master_seln,
+                    self.instructions,
+                );
+            }
+            IO_SPI_SCLK => {
+                self.io.master_sclk = (value & 1) != 0;
+                self.io.spi.step(
+                    self.io.master_sclk,
+                    (self.io.master_mosi & 1) != 0,
+                    self.io.master_seln,
+                    self.instructions,
+                );
+            }
+            IO_SPI_SELN => {
+                self.io.master_seln = (value & 1) != 0;
+                self.io.spi.step(
+                    self.io.master_sclk,
+                    (self.io.master_mosi & 1) != 0,
+                    self.io.master_seln,
+                    self.instructions,
+                );
             }
             IO_UARTDATA => {
                 if self.io.uart_tx_busy {
@@ -1240,5 +1307,50 @@ mod tests {
         assert_eq!(cpu.read_byte(IO_I2C_SCL), 0);
         cpu.write_byte(IO_I2C_SDA, 0xFF);
         assert_eq!(cpu.read_byte(IO_I2C_SDA), 1);
+    }
+
+    #[test]
+    fn test_spi_idle_state_after_reset() {
+        let cpu = CpuState::new();
+        // No clocks have ticked: MISO read returns the captured MISO
+        // bit (0). SCLK starts low; SELN starts high (active-low: 1 =
+        // nothing selected).
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 1);
+    }
+
+    #[test]
+    fn test_spi_master_line_roundtrip() {
+        let mut cpu = CpuState::new();
+
+        // IO_SPI_DATA writes set MOSI; reads return the most recently
+        // sampled MISO bit. With no SCLK rises (and no slave attached),
+        // reads stay at 0. Writes still persist the master's MOSI
+        // byte for the next clocked exchange — verified via the bus
+        // state below rather than through a write/read round-trip.
+        cpu.write_byte(IO_SPI_DATA, 0xA5);
+        assert_eq!(cpu.io.master_mosi, 0xA5);
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
+        cpu.write_byte(IO_SPI_DATA, 0x00);
+        assert_eq!(cpu.io.master_mosi, 0x00);
+        assert_eq!(cpu.read_byte(IO_SPI_DATA), 0);
+
+        // SCLK / SELN persist the low bit.
+        cpu.write_byte(IO_SPI_SCLK, 1);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 1);
+        cpu.write_byte(IO_SPI_SCLK, 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
+
+        cpu.write_byte(IO_SPI_SELN, 0);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 0);
+        cpu.write_byte(IO_SPI_SELN, 1);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 1);
+
+        // Only the low bit matters for SCLK / SELN drivers.
+        cpu.write_byte(IO_SPI_SCLK, 0xFE);
+        assert_eq!(cpu.read_byte(IO_SPI_SCLK), 0);
+        cpu.write_byte(IO_SPI_SELN, 0xFF);
+        assert_eq!(cpu.read_byte(IO_SPI_SELN), 1);
     }
 }

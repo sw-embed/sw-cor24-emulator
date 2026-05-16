@@ -1301,6 +1301,7 @@ fn load_binaries_and_patches(
     emu: &mut EmulatorCore,
     binaries: &[(String, u32)],
     patches: &[(u32, u32)],
+    quiet: bool,
 ) {
     for (file_path, addr) in binaries {
         let data = fs::read(file_path).unwrap_or_else(|e| {
@@ -1318,21 +1319,28 @@ fn load_binaries_and_patches(
             emu.write_byte(addr + i as u32, b);
         }
         emu.load_program_extent(addr + body.len() as u32);
-        if stripped {
-            println!(
+        let msg = if stripped {
+            format!(
                 "Loaded {} bytes from '{}' at 0x{:06X} (stripped {} byte .p24 header)",
                 body.len(),
                 file_path,
                 addr,
                 P24_HEADER_SIZE
-            );
+            )
         } else {
-            println!(
+            format!(
                 "Loaded {} bytes from '{}' at 0x{:06X}",
                 body.len(),
                 file_path,
                 addr
-            );
+            )
+        };
+        // Per --help: under --quiet, UART TX is the only thing on
+        // stdout; other logs go to stderr.
+        if quiet {
+            eprintln!("{}", msg);
+        } else {
+            println!("{}", msg);
         }
     }
 
@@ -1340,7 +1348,12 @@ fn load_binaries_and_patches(
         emu.write_byte(addr, (value & 0xFF) as u8);
         emu.write_byte(addr + 1, ((value >> 8) & 0xFF) as u8);
         emu.write_byte(addr + 2, ((value >> 16) & 0xFF) as u8);
-        println!("Patched 0x{:06X} = 0x{:06X}", addr, value);
+        let msg = format!("Patched 0x{:06X} = 0x{:06X}", addr, value);
+        if quiet {
+            eprintln!("{}", msg);
+        } else {
+            println!("{}", msg);
+        }
     }
 }
 
@@ -1454,6 +1467,12 @@ fn main() {
                 }
             }
 
+            // Layer --load-binary / --patch on top of the .lgo image —
+            // matches the precedence the "binary" arm uses and the
+            // help text's combined-form examples
+            // (e.g. `cor24-emu --lgo pvm.lgo --load-binary hello.p24@…`).
+            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches, cli.quiet);
+
             attach_i2c_devices(&mut emu, &cli.i2c_devices);
 
             let guard = GuardState::install(&cli, &mut emu);
@@ -1500,7 +1519,7 @@ fn main() {
                 emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
             }
 
-            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches);
+            load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches, cli.quiet);
 
             if let Some(entry_str) = &cli.entry {
                 match parse_numeric_addr(entry_str) {
@@ -1677,7 +1696,7 @@ mod tests {
     #[test]
     fn test_patch_writes_24bit_le() {
         let mut emu = EmulatorCore::new();
-        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0x010000)]);
+        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0x010000)], false);
         assert_eq!(emu.read_byte(0x100), 0x00);
         assert_eq!(emu.read_byte(0x101), 0x00);
         assert_eq!(emu.read_byte(0x102), 0x01);
@@ -1735,7 +1754,7 @@ mod tests {
     #[test]
     fn test_patch_multiple() {
         let mut emu = EmulatorCore::new();
-        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0xABCDEF), (0x200, 0x42)]);
+        load_binaries_and_patches(&mut emu, &[], &[(0x100, 0xABCDEF), (0x200, 0x42)], false);
         assert_eq!(emu.read_byte(0x100), 0xEF);
         assert_eq!(emu.read_byte(0x101), 0xCD);
         assert_eq!(emu.read_byte(0x102), 0xAB);
@@ -1751,6 +1770,7 @@ mod tests {
             &mut emu,
             &[(tmp.to_string_lossy().to_string(), 0x1000)],
             &[],
+            false,
         );
         assert_eq!(emu.read_byte(0x1000), 0x44);
         assert_eq!(emu.read_byte(0x1001), 0x05);
@@ -1777,6 +1797,7 @@ mod tests {
             &mut emu,
             &[(tmp.to_string_lossy().to_string(), 0x010000)],
             &[],
+            false,
         );
         assert_eq!(emu.read_byte(0x010000), 0xAA);
         assert_eq!(emu.read_byte(0x010001), 0xBB);
@@ -1826,5 +1847,100 @@ mod tests {
         let snap = emu.snapshot();
         assert_eq!(snap.regs[0], 42);
         assert!(snap.halted);
+    }
+
+    /// Tiny program that loads byte at 0x080000 into r0, writes it to
+    /// UART (0xFF0100), then spins. Used by the --lgo + --load-binary
+    /// merge tests below: the byte at 0x080000 has to come from the
+    /// auxiliary file, not the .lgo image, for the UART to print it.
+    fn lgo_uart_echo_aux() -> String {
+        asm_to_lgo(
+            "
+            la   r1, 0x080000
+            lb   r0, 0(r1)
+            la   r1, 0xFF0100
+            sb   r0, 0(r1)
+        halt:
+            bra  halt
+        ",
+        )
+    }
+
+    #[test]
+    fn test_lgo_with_load_binary_merges_aux_data() {
+        // Regression for dcemu-lgo-load-binary-merge: --load-binary
+        // was silently dropped in the lgo dispatch arm. Mirror the
+        // arm's load sequence here (load_lgo -> set_pc ->
+        // load_binaries_and_patches) and assert the auxiliary byte
+        // reaches memory.
+        let lgo = lgo_uart_echo_aux();
+        let aux = std::env::temp_dir().join("cor24_emu_test_lgo_aux.bin");
+        fs::write(&aux, [0x42]).unwrap();
+
+        let mut emu = EmulatorCore::new();
+        emu.load_lgo(&lgo, None).expect("load_lgo");
+        emu.set_pc(0);
+        load_binaries_and_patches(
+            &mut emu,
+            &[(aux.to_string_lossy().to_string(), 0x080000)],
+            &[],
+            false,
+        );
+        emu.resume();
+        emu.run_batch(100);
+
+        assert_eq!(
+            emu.read_byte(0x080000),
+            0x42,
+            "auxiliary byte must be loaded into memory at 0x080000",
+        );
+        assert_eq!(emu.get_uart_output(), "B", "guest must print 'B' (0x42)");
+        fs::remove_file(&aux).ok();
+    }
+
+    #[test]
+    fn test_lgo_with_multiple_load_binary_all_land() {
+        let lgo = lgo_uart_echo_aux();
+        let aux1 = std::env::temp_dir().join("cor24_emu_test_lgo_aux1.bin");
+        let aux2 = std::env::temp_dir().join("cor24_emu_test_lgo_aux2.bin");
+        fs::write(&aux1, [0x42]).unwrap();
+        fs::write(&aux2, [0xAA, 0xBB, 0xCC]).unwrap();
+
+        let mut emu = EmulatorCore::new();
+        emu.load_lgo(&lgo, None).expect("load_lgo");
+        emu.set_pc(0);
+        load_binaries_and_patches(
+            &mut emu,
+            &[
+                (aux1.to_string_lossy().to_string(), 0x080000),
+                (aux2.to_string_lossy().to_string(), 0x090000),
+            ],
+            &[],
+            false,
+        );
+
+        assert_eq!(emu.read_byte(0x080000), 0x42);
+        assert_eq!(emu.read_byte(0x090000), 0xAA);
+        assert_eq!(emu.read_byte(0x090001), 0xBB);
+        assert_eq!(emu.read_byte(0x090002), 0xCC);
+        fs::remove_file(&aux1).ok();
+        fs::remove_file(&aux2).ok();
+    }
+
+    #[test]
+    fn test_lgo_with_patch_lands_in_memory() {
+        // --patch parity: the same call also threads --patch through.
+        let lgo = lgo_uart_echo_aux();
+        let mut emu = EmulatorCore::new();
+        emu.load_lgo(&lgo, None).expect("load_lgo");
+        emu.set_pc(0);
+        load_binaries_and_patches(&mut emu, &[], &[(0x080000, 0x42)], false);
+        emu.resume();
+        emu.run_batch(100);
+
+        // Patch writes 24 bits little-endian; the low byte is at
+        // 0x080000 — that's what the guest reads.
+        assert_eq!(emu.read_byte(0x080000), 0x42);
+        assert_eq!(emu.get_uart_output(), "B");
     }
 }

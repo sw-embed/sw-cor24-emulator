@@ -1,0 +1,13 @@
+number = 2
+slug = "spi-mmio-stub"
+status = "completed"
+description = """
+Phase C.1 — SPI MMIO stub at 0xFF0030 / 0xFF0031 / 0xFF0032.
+
+Mirror of I2C..."""
+role = "legacy"
+context_files = []
+created_at = "2026-05-08T08:33:51"
+completed_at = "2026-05-08T08:38:19"
+task_type = "rust-feature"
+commits = ["9f084dc72b96855ec8c7eb05ddfbb58431682424"]
