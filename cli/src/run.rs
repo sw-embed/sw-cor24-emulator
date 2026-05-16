@@ -1439,6 +1439,17 @@ fn main() {
             });
 
             let mut emu = EmulatorCore::new();
+
+            let bytes = emu.load_lgo(&content, None).unwrap_or_else(|e| {
+                eprintln!("Error: load_lgo failed: {}", e);
+                std::process::exit(1);
+            });
+            if !cli.quiet {
+                println!("Loaded {} bytes from {}", bytes, filename);
+            }
+
+            // I/O / stack overrides must land after load_lgo, which replaces
+            // self.cpu wholesale and would otherwise discard them.
             if cli.uart_never_ready {
                 emu.set_uart_never_ready(true);
             }
@@ -1448,14 +1459,6 @@ fn main() {
             if cli.stack_kb == 8 {
                 emu.set_reg(4, 0xFF0000);
                 emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
-            }
-
-            let bytes = emu.load_lgo(&content, None).unwrap_or_else(|e| {
-                eprintln!("Error: load_lgo failed: {}", e);
-                std::process::exit(1);
-            });
-            if !cli.quiet {
-                println!("Loaded {} bytes from {}", bytes, filename);
             }
 
             if let Some(entry_str) = &cli.entry
