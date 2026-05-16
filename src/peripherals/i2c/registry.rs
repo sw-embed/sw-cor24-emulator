@@ -88,7 +88,10 @@ impl AddressMap {
 /// (`0x50` or `50`). Recognised devices:
 ///   - `add1@<addr>[?wrap=<n>]`             — universal +1 test slave.
 ///   - `tmp101@<addr>[?temp=<f>][?config=<n>]` — TI temp sensor.
-///   - `ds1307@<addr>`                       — Dallas/Maxim RTC.
+///   - `ds1307@<addr>[?epoch=<now|seconds>]` — Dallas/Maxim RTC.
+///     `epoch=now` seeds from the host's wall clock; `epoch=<unix>`
+///     seeds from an explicit UTC timestamp. Default is all-zero
+///     registers (cold-start hardware behaviour).
 pub fn build_i2c_device(
     spec: &str,
 ) -> Result<std::sync::Arc<std::sync::Mutex<dyn I2cDevice>>, String> {
@@ -151,15 +154,31 @@ pub fn build_i2c_device(
             Ok(Arc::new(Mutex::new(dev)))
         }
         "ds1307" => {
-            if let Some(p) = params
-                && let Some(kv) = p.split('&').next()
-            {
-                let (k, _) = kv
-                    .split_once('=')
-                    .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
-                return Err(format!("unknown ds1307 param '{k}' in '{spec}'"));
+            let mut dev = Ds1307Device::new(addr);
+            if let Some(p) = params {
+                for kv in p.split('&') {
+                    let (k, v) = kv
+                        .split_once('=')
+                        .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
+                    match k {
+                        "epoch" => {
+                            let secs = if v == "now" {
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0)
+                            } else {
+                                v.parse::<u64>().map_err(|e| {
+                                    format!("bad ds1307 epoch '{v}' in '{spec}': {e}")
+                                })?
+                            };
+                            dev.set_from_unix_seconds(secs);
+                        }
+                        _ => return Err(format!("unknown ds1307 param '{k}' in '{spec}'")),
+                    }
+                }
             }
-            Ok(Arc::new(Mutex::new(Ds1307Device::new(addr))))
+            Ok(Arc::new(Mutex::new(dev)))
         }
         other => Err(format!("unknown I2C device '{other}'")),
     }
@@ -247,9 +266,58 @@ mod tests {
     }
 
     #[test]
-    fn build_ds1307_default() {
+    fn build_ds1307_default_address_and_name() {
         assert_eq!(dev_address("ds1307@0x68"), 0x68);
         assert_eq!(dev_name("ds1307@0x68"), "ds1307");
+    }
+
+    #[test]
+    fn build_ds1307_default_is_zero() {
+        // Default (no params) must mirror cold-start hardware: every
+        // register reads as 0x00.
+        let arc = build_i2c_device("ds1307@0x68").unwrap();
+        let mut g = arc.lock().unwrap();
+        g.on_start();
+        assert_eq!(g.on_write_byte(0x00), crate::peripherals::i2c::Ack::Ack);
+        g.on_start();
+        for _ in 0..8 {
+            assert_eq!(g.on_read_byte(), 0x00);
+        }
+    }
+
+    #[test]
+    fn build_ds1307_epoch_now_seeds_clock() {
+        // Read the year register through the bus to confirm epoch=now
+        // fired. Year stored as BCD; ≥0x25 means ≥2025, which is the
+        // floor we ship at.
+        let arc = build_i2c_device("ds1307@0x68?epoch=now").unwrap();
+        let mut g = arc.lock().unwrap();
+        g.on_start();
+        assert_eq!(g.on_write_byte(0x06), crate::peripherals::i2c::Ack::Ack);
+        g.on_start();
+        let year_bcd = g.on_read_byte();
+        assert!(
+            year_bcd >= 0x25,
+            "expected epoch=now to seed at least year 2025, got BCD {year_bcd:#04x}"
+        );
+    }
+
+    #[test]
+    fn build_ds1307_epoch_explicit_seconds() {
+        // 2026-05-16 14:45:30 UTC = 1_778_942_730.
+        let arc = build_i2c_device("ds1307@0x68?epoch=1778942730").unwrap();
+        let mut g = arc.lock().unwrap();
+        g.on_start();
+        // Read pointer 0x00 → 7 bytes: sec, min, hr, dow, date, mon, yr.
+        assert_eq!(g.on_write_byte(0x00), crate::peripherals::i2c::Ack::Ack);
+        g.on_start();
+        let bytes: Vec<u8> = (0..7).map(|_| g.on_read_byte()).collect();
+        assert_eq!(bytes, vec![0x30, 0x45, 0x14, 0x07, 0x16, 0x05, 0x26]);
+    }
+
+    #[test]
+    fn build_ds1307_epoch_garbage_rejected() {
+        expect_err("ds1307@0x68?epoch=notanumber", "bad ds1307 epoch");
     }
 
     #[test]
