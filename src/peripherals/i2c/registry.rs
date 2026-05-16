@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use super::device::I2cDevice;
 use super::devices::add1::Add1Device;
+use super::devices::ds1307::Ds1307Device;
 use super::devices::tmp101::Tmp101Device;
 
 /// Inner storage of the routing table. Public to the crate so the
@@ -87,6 +88,7 @@ impl AddressMap {
 /// (`0x50` or `50`). Recognised devices:
 ///   - `add1@<addr>[?wrap=<n>]`             — universal +1 test slave.
 ///   - `tmp101@<addr>[?temp=<f>][?config=<n>]` — TI temp sensor.
+///   - `ds1307@<addr>`                       — Dallas/Maxim RTC.
 pub fn build_i2c_device(
     spec: &str,
 ) -> Result<std::sync::Arc<std::sync::Mutex<dyn I2cDevice>>, String> {
@@ -147,6 +149,17 @@ pub fn build_i2c_device(
                 }
             }
             Ok(Arc::new(Mutex::new(dev)))
+        }
+        "ds1307" => {
+            if let Some(p) = params
+                && let Some(kv) = p.split('&').next()
+            {
+                let (k, _) = kv
+                    .split_once('=')
+                    .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
+                return Err(format!("unknown ds1307 param '{k}' in '{spec}'"));
+            }
+            Ok(Arc::new(Mutex::new(Ds1307Device::new(addr))))
         }
         other => Err(format!("unknown I2C device '{other}'")),
     }
@@ -231,5 +244,16 @@ mod tests {
     #[test]
     fn build_tmp101_unknown_param_rejected() {
         expect_err("tmp101@0x4A?wrap=10", "unknown tmp101 param");
+    }
+
+    #[test]
+    fn build_ds1307_default() {
+        assert_eq!(dev_address("ds1307@0x68"), 0x68);
+        assert_eq!(dev_name("ds1307@0x68"), "ds1307");
+    }
+
+    #[test]
+    fn build_ds1307_unknown_param_rejected() {
+        expect_err("ds1307@0x68?temp=25.0", "unknown ds1307 param");
     }
 }
