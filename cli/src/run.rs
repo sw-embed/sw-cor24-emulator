@@ -75,6 +75,7 @@ fn print_short_help() {
     println!("                                 [?second=<n>][?date=<n>][?month=<n>]");
     println!("                                 [?year=<n>][?dow=<n>]");
     println!("                                 [?preset=system]                Dallas/Maxim RTC");
+    println!("                           ssd1306@<addr>[?width=<n>][?height=<n>]  SSD1306 OLED display");
     println!("  --trace <N>            Dump last N instructions on halt/timeout (default: 50)");
     println!("  --step                 Print each instruction as it executes");
     println!("  --terminal             Bridge stdin/stdout to UART (interactive mode)");

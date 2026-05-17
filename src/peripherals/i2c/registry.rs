@@ -94,6 +94,10 @@ impl AddressMap {
 ///     fills all 7 time registers. `preset` and any per-field param
 ///     are mutually exclusive. Default (no params) is all-zero
 ///     registers (cold-start hardware behaviour).
+///   - `ssd1306@<addr>[?width=<n>][?height=<n>]` — Solomon Systech
+///     SSD1306 monochrome OLED. Width=128 only; height=32 or 64
+///     (defaults: 128×64). Default address per datasheet is 0x3C
+///     (some boards strap to 0x3D).
 pub fn build_i2c_device(
     spec: &str,
 ) -> Result<std::sync::Arc<std::sync::Mutex<dyn I2cDevice>>, String> {
@@ -156,6 +160,7 @@ pub fn build_i2c_device(
             Ok(Arc::new(Mutex::new(dev)))
         }
         "ds1307" => build_ds1307(addr, params, spec),
+        "ssd1306" => build_ssd1306(addr, params, spec),
         other => Err(format!("unknown I2C device '{other}'")),
     }
 }
@@ -254,6 +259,54 @@ fn parse_ds1307_range(key: &str, value: &str, lo: u8, hi: u8, spec: &str) -> Res
         ));
     }
     Ok(n)
+}
+
+fn build_ssd1306(
+    addr: u8,
+    params: Option<&str>,
+    spec: &str,
+) -> Result<Arc<Mutex<dyn I2cDevice>>, String> {
+    use crate::peripherals::i2c::devices::ssd1306::Ssd1306Device;
+
+    let mut width: u16 = 128;
+    let mut height: u16 = 64;
+
+    if let Some(p) = params {
+        for kv in p.split('&') {
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
+            match k {
+                "width" => {
+                    let n: u16 = v.parse().map_err(|_| {
+                        format!("ssd1306 'width' not a decimal number: '{v}' in '{spec}'")
+                    })?;
+                    if n != 128 {
+                        return Err(format!(
+                            "ssd1306 'width' out of range: {n} (valid: 128) in '{spec}'"
+                        ));
+                    }
+                    width = n;
+                }
+                "height" => {
+                    let n: u16 = v.parse().map_err(|_| {
+                        format!("ssd1306 'height' not a decimal number: '{v}' in '{spec}'")
+                    })?;
+                    if n != 32 && n != 64 {
+                        return Err(format!(
+                            "ssd1306 'height' out of range: {n} (valid: 32 or 64) in '{spec}'"
+                        ));
+                    }
+                    height = n;
+                }
+                _ => return Err(format!("unknown ssd1306 param '{k}' in '{spec}'")),
+            }
+        }
+    }
+
+    Ok(Arc::new(Mutex::new(Ssd1306Device::with_size(
+        addr, width, height,
+    ))))
 }
 
 fn parse_addr(s: &str) -> Option<u8> {
@@ -459,5 +512,49 @@ mod tests {
         // and what cold-start hardware would give.
         let bytes = read_ds1307_bytes("ds1307@0x68?hour=12", 7);
         assert_eq!(bytes, vec![0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    // === SSD1306 ===
+
+    #[test]
+    fn build_ssd1306_default() {
+        assert_eq!(dev_address("ssd1306@0x3C"), 0x3C);
+        assert_eq!(dev_name("ssd1306@0x3C"), "ssd1306");
+    }
+
+    #[test]
+    fn build_ssd1306_with_explicit_default_size() {
+        // Explicit width=128 + height=64 must work.
+        let _ = build_i2c_device("ssd1306@0x3C?width=128&height=64").unwrap();
+    }
+
+    #[test]
+    fn build_ssd1306_with_height_32() {
+        let _ = build_i2c_device("ssd1306@0x3C?height=32").unwrap();
+    }
+
+    #[test]
+    fn build_ssd1306_rejects_other_widths() {
+        expect_err("ssd1306@0x3C?width=64", "ssd1306 'width' out of range");
+        expect_err("ssd1306@0x3C?width=256", "ssd1306 'width' out of range");
+    }
+
+    #[test]
+    fn build_ssd1306_rejects_other_heights() {
+        expect_err("ssd1306@0x3C?height=16", "ssd1306 'height' out of range");
+        expect_err("ssd1306@0x3C?height=128", "ssd1306 'height' out of range");
+    }
+
+    #[test]
+    fn build_ssd1306_unknown_param_rejected() {
+        expect_err("ssd1306@0x3C?temp=25.0", "unknown ssd1306 param");
+    }
+
+    #[test]
+    fn build_ssd1306_non_numeric_width_rejected() {
+        expect_err(
+            "ssd1306@0x3C?width=tall",
+            "ssd1306 'width' not a decimal number",
+        );
     }
 }

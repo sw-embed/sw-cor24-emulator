@@ -9,7 +9,8 @@ pub mod registry;
 
 pub use device::{Ack, I2cDevice};
 pub use devices::{
-    Add1Device, Ds1307Device, Ds1307HandleExt, Tmp101Device, Tmp101HandleExt, Tmp101Resolution,
+    Add1Device, Ds1307Device, Ds1307HandleExt, Ssd1306AddressingMode, Ssd1306Device,
+    Ssd1306HandleExt, Tmp101Device, Tmp101HandleExt, Tmp101Resolution,
 };
 pub use handle::{AddressInUse, I2cHandle};
 pub use log::{I2cEvent, I2cLog, I2cLogEntry};
