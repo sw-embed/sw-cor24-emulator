@@ -38,6 +38,11 @@ pub enum I2cPhase {
     TxByte { bits: u8, n: u8 },
     /// 8 bits read; master ACKs to continue or NAKs to end the read.
     AckSlaveToMaster,
+    /// Master NAK'd the last byte of a read. The slave has released
+    /// SDA and we're waiting for the master to drive STOP or a
+    /// REPEATED START before any further bus activity. Any spurious
+    /// SCL pulses in this phase are ignored.
+    PostNak,
     /// Saw STOP; resolves to Idle on the next bus event.
     Stopped,
 }
@@ -281,10 +286,21 @@ impl I2cBusState {
                         d.on_master_nak();
                     }
                 }
-                // Continue with another byte slot — if the master
-                // chose NAK, it will issue STOP/repeated START before
-                // any further clocks shift this state.
-                self.phase = I2cPhase::TxByte { bits: 0, n: 0 };
+                // On ACK, queue the next byte slot. On NAK, the slave
+                // must release SDA so the master's STOP or REPEATED
+                // START isn't masked by a stale slave pull-down — see
+                // the PostNak variant's docs.
+                self.phase = if master_acked {
+                    I2cPhase::TxByte { bits: 0, n: 0 }
+                } else {
+                    I2cPhase::PostNak
+                };
+            }
+            I2cPhase::PostNak => {
+                // Master NAK'd; we're awaiting STOP or REPEATED START.
+                // Either of those is handled by the SDA-edge detectors
+                // at the top of `step()`. Spurious clocks here are
+                // ignored without disturbing the released SDA line.
             }
             I2cPhase::Stopped => {
                 self.phase = I2cPhase::Idle;
@@ -588,6 +604,129 @@ mod tests {
         bus_start(&mut cpu);
         let acked = bus_write_byte(&mut cpu, 0x42 << 1);
         assert!(!acked, "device at 0x50 should NOT ACK address 0x42");
+    }
+
+    // === NAK-handling regression tests (brief 7-dcemu-i2c-bus-nak-handling) ===
+
+    /// Pre-fix bug: after master NAK, the AckSlaveToMaster arm
+    /// transitioned to TxByte, which on the next SCL fall pulled SDA
+    /// low (because tx_byte had been shifted to zero). The slave's
+    /// stuck pull-down then masked the master's SDA-rise that should
+    /// produce STOP. Post-fix: NAK transitions to PostNak; default
+    /// on_scl_fall arm releases SDA.
+    #[test]
+    fn nak_releases_slave_sda() {
+        use crate::peripherals::i2c::devices::add1::Add1Device;
+        use std::sync::{Arc, Mutex};
+
+        let mut cpu = CpuState::new();
+        let dev: Arc<Mutex<dyn crate::peripherals::i2c::device::I2cDevice>> =
+            Arc::new(Mutex::new(Add1Device::new(0x50, 0x100)));
+        cpu.io.i2c.addresses.insert(0x50, dev).unwrap();
+
+        bus_start(&mut cpu);
+        assert!(bus_write_byte(&mut cpu, (0x50 << 1) | 1));
+        // Read one byte and NAK. bus_read_byte ends with SCL low (the
+        // fall after the ACK clock) — exactly the moment whose
+        // slave_sda_pull computation was the pre-fix bug.
+        let _ = bus_read_byte(&mut cpu, false);
+        assert_eq!(
+            cpu.io.i2c.phase,
+            I2cPhase::PostNak,
+            "NAK must leave the bus in PostNak so STOP can fire",
+        );
+        assert!(
+            !cpu.io.i2c.slave_sda_pull,
+            "slave must release SDA after master NAK so STOP can fire",
+        );
+    }
+
+    /// Canonical read-N-bytes-then-NAK-and-STOP. Asserts that STOP is
+    /// detected, the bus returns to a clean state, and the device's
+    /// internal byte sequence shows exactly the expected number of
+    /// reads (no runaway streaming past STOP).
+    #[test]
+    fn canonical_multi_byte_read_terminates() {
+        use crate::peripherals::i2c::devices::add1::Add1Device;
+        use std::sync::{Arc, Mutex};
+
+        let mut cpu = CpuState::new();
+        let dev: Arc<Mutex<dyn crate::peripherals::i2c::device::I2cDevice>> =
+            Arc::new(Mutex::new(Add1Device::new(0x50, 0x100)));
+        cpu.io.i2c.addresses.insert(0x50, dev.clone()).unwrap();
+
+        // Address-write of the read direction. The address-byte
+        // dispatch path pre-fetches one read byte into tx_byte (see
+        // dispatch_byte_completion), which advances Add1's counter
+        // from 0 to 1. We account for that below.
+        bus_start(&mut cpu);
+        assert!(bus_write_byte(&mut cpu, (0x50 << 1) | 1));
+
+        let r1 = bus_read_byte(&mut cpu, true);
+        let r2 = bus_read_byte(&mut cpu, true);
+        let r3 = bus_read_byte(&mut cpu, false); // NAK the third
+        bus_stop(&mut cpu);
+
+        // Add1 emits last+1 on each read. Pre-fetch gives 1, then
+        // each completed read advances another step.
+        assert_eq!((r1, r2, r3), (1, 2, 3));
+
+        // Bus must have detected STOP, not still be waiting for clocks
+        // because the slave was masking the STOP rise.
+        assert!(
+            matches!(cpu.io.i2c.phase, I2cPhase::Stopped | I2cPhase::Idle),
+            "post-STOP phase should be Stopped or Idle, got {:?}",
+            cpu.io.i2c.phase,
+        );
+        assert_eq!(cpu.io.i2c.current_target, None);
+
+        // After STOP, the device must NOT have streamed further bytes.
+        // Add1's `last` is one ahead of the most recent byte it emitted.
+        // Downcast through the I2cDevice trait isn't available, so we
+        // go indirect: a fresh transaction picks up from 4, not from a
+        // runaway value the pre-fix bug would have advanced past STOP.
+        drop(dev);
+        bus_start(&mut cpu);
+        assert!(bus_write_byte(&mut cpu, (0x50 << 1) | 1));
+        let r4 = bus_read_byte(&mut cpu, false);
+        bus_stop(&mut cpu);
+        assert_eq!(
+            r4, 4,
+            "device must not have streamed runaway bytes during the STOP"
+        );
+    }
+
+    /// Master NAKs then issues REPEATED START (no STOP between). The
+    /// new transaction's address byte must parse correctly — pre-fix
+    /// the stuck slave_sda_pull would have corrupted the START edge
+    /// detection.
+    #[test]
+    fn nak_then_repeated_start() {
+        use crate::peripherals::i2c::devices::add1::Add1Device;
+        use std::sync::{Arc, Mutex};
+
+        let mut cpu = CpuState::new();
+        let dev: Arc<Mutex<dyn crate::peripherals::i2c::device::I2cDevice>> =
+            Arc::new(Mutex::new(Add1Device::new(0x50, 0x100)));
+        cpu.io.i2c.addresses.insert(0x50, dev).unwrap();
+
+        bus_start(&mut cpu);
+        assert!(bus_write_byte(&mut cpu, (0x50 << 1) | 1));
+        let _ = bus_read_byte(&mut cpu, false); // NAK
+
+        // REPEATED START without intervening STOP. Pre-fix, the
+        // stuck slave_sda_pull would mask the master's SDA-high
+        // before the falling edge, breaking the START detector.
+        bus_start(&mut cpu);
+        assert_eq!(cpu.io.i2c.phase, I2cPhase::Started);
+        assert_eq!(cpu.io.i2c.current_target, None);
+        assert_eq!(cpu.io.i2c.transactions, 2);
+
+        // Address the same slave again, write direction this time —
+        // confirms the address byte parsed correctly.
+        assert!(bus_write_byte(&mut cpu, 0x50 << 1));
+        assert_eq!(cpu.io.i2c.current_target, Some(0x50));
+        assert_eq!(cpu.io.i2c.current_dir, I2cDir::Write);
     }
 }
 
