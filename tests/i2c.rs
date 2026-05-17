@@ -338,3 +338,35 @@ fn cli_ssd1306_with_size() {
         .expect("attach should succeed");
     assert!(core.i2c().addresses.lookup(0x3C).is_some());
 }
+
+/// End-to-end via EmulatorCore::write_byte/read_byte (the same path
+/// libi2c bit-bangs through): canonical multi-byte read terminated by
+/// NAK + STOP must release the slave SDA so the master's STOP edge
+/// actually fires. Pre-fix bug: slave_sda_pull stuck true masked the
+/// STOP rise and the device kept streaming bytes for every clock the
+/// master made after.
+#[test]
+fn canonical_nak_termination_through_mmio() {
+    use cor24_emulator::peripherals::i2c::Add1Device;
+
+    let mut core = EmulatorCore::new();
+    let _h = core
+        .attach_i2c_device(Add1Device::new(0x50, 0x100))
+        .expect("attach add1 at 0x50");
+
+    bus_start(&mut core);
+    assert!(bus_write_byte(&mut core, (0x50 << 1) | 1));
+    let r1 = bus_read_byte(&mut core, true);
+    let r2 = bus_read_byte(&mut core, true);
+    let r3 = bus_read_byte(&mut core, false); // NAK the last
+    bus_stop(&mut core);
+    assert_eq!((r1, r2, r3), (1, 2, 3));
+
+    // The next transaction must see the device's counter at 4, not at
+    // a runaway value pre-fix would have produced.
+    bus_start(&mut core);
+    assert!(bus_write_byte(&mut core, (0x50 << 1) | 1));
+    let r4 = bus_read_byte(&mut core, false);
+    bus_stop(&mut core);
+    assert_eq!(r4, 4, "runaway streaming past STOP detected");
+}
