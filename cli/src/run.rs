@@ -69,8 +69,12 @@ fn print_short_help() {
     println!("  --dump-uart            Show UART transaction log (chronological IN/OUT)");
     println!("  --dump-i2c             Show I2C transaction log (chronological START/byte/STOP)");
     println!("  --i2c-device <spec>    Attach an I2C device (repeatable). Specs:");
-    println!("                           add1@<addr>[?wrap=<n>]   universal +1 test slave");
-    println!("                           tmp101@<addr>[?temp=<f>][?config=<n>]  TI temp sensor");
+    println!("                           add1@<addr>[?wrap=<n>]                universal +1 test slave");
+    println!("                           tmp101@<addr>[?temp=<f>][?config=<n>] TI temp sensor");
+    println!("                           ds1307@<addr>[?hour=<n>][?minute=<n>]");
+    println!("                                 [?second=<n>][?date=<n>][?month=<n>]");
+    println!("                                 [?year=<n>][?dow=<n>]");
+    println!("                                 [?preset=system]                Dallas/Maxim RTC");
     println!("  --trace <N>            Dump last N instructions on halt/timeout (default: 50)");
     println!("  --step                 Print each instruction as it executes");
     println!("  --terminal             Bridge stdin/stdout to UART (interactive mode)");

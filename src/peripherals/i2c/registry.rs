@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 
 use super::device::I2cDevice;
 use super::devices::add1::Add1Device;
-use super::devices::ds1307::Ds1307Device;
 use super::devices::tmp101::Tmp101Device;
 
 /// Inner storage of the routing table. Public to the crate so the
@@ -88,9 +87,12 @@ impl AddressMap {
 /// (`0x50` or `50`). Recognised devices:
 ///   - `add1@<addr>[?wrap=<n>]`             — universal +1 test slave.
 ///   - `tmp101@<addr>[?temp=<f>][?config=<n>]` — TI temp sensor.
-///   - `ds1307@<addr>[?epoch=<now|seconds>]` — Dallas/Maxim RTC.
-///     `epoch=now` seeds from the host's wall clock; `epoch=<unix>`
-///     seeds from an explicit UTC timestamp. Default is all-zero
+///   - `ds1307@<addr>[?hour=<n>][?minute=<n>][?second=<n>]`
+///     `[?date=<n>][?month=<n>][?year=<n>][?dow=<n>][?preset=system]`
+///     — Dallas/Maxim RTC. Per-field params seed individual registers;
+///     `preset=system` reads the host wall-clock at attach time and
+///     fills all 7 time registers. `preset` and any per-field param
+///     are mutually exclusive. Default (no params) is all-zero
 ///     registers (cold-start hardware behaviour).
 pub fn build_i2c_device(
     spec: &str,
@@ -153,35 +155,105 @@ pub fn build_i2c_device(
             }
             Ok(Arc::new(Mutex::new(dev)))
         }
-        "ds1307" => {
-            let mut dev = Ds1307Device::new(addr);
-            if let Some(p) = params {
-                for kv in p.split('&') {
-                    let (k, v) = kv
-                        .split_once('=')
-                        .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
-                    match k {
-                        "epoch" => {
-                            let secs = if v == "now" {
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs())
-                                    .unwrap_or(0)
-                            } else {
-                                v.parse::<u64>().map_err(|e| {
-                                    format!("bad ds1307 epoch '{v}' in '{spec}': {e}")
-                                })?
-                            };
-                            dev.set_from_unix_seconds(secs);
-                        }
-                        _ => return Err(format!("unknown ds1307 param '{k}' in '{spec}'")),
-                    }
-                }
-            }
-            Ok(Arc::new(Mutex::new(dev)))
-        }
+        "ds1307" => build_ds1307(addr, params, spec),
         other => Err(format!("unknown I2C device '{other}'")),
     }
+}
+
+fn build_ds1307(
+    addr: u8,
+    params: Option<&str>,
+    spec: &str,
+) -> Result<Arc<Mutex<dyn I2cDevice>>, String> {
+    use crate::peripherals::i2c::devices::ds1307::{Ds1307Device, int_to_bcd};
+
+    let mut second: Option<u8> = None;
+    let mut minute: Option<u8> = None;
+    let mut hour: Option<u8> = None;
+    let mut day_of_week: Option<u8> = None;
+    let mut date: Option<u8> = None;
+    let mut month: Option<u8> = None;
+    let mut year: Option<u8> = None;
+    let mut preset_seen = false;
+
+    if let Some(p) = params {
+        for kv in p.split('&') {
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
+            match k {
+                "hour" => hour = Some(parse_ds1307_range(k, v, 0, 23, spec)?),
+                "minute" => minute = Some(parse_ds1307_range(k, v, 0, 59, spec)?),
+                "second" => second = Some(parse_ds1307_range(k, v, 0, 59, spec)?),
+                "date" => date = Some(parse_ds1307_range(k, v, 1, 31, spec)?),
+                "month" => month = Some(parse_ds1307_range(k, v, 1, 12, spec)?),
+                "year" => year = Some(parse_ds1307_range(k, v, 0, 99, spec)?),
+                "dow" => day_of_week = Some(parse_ds1307_range(k, v, 1, 7, spec)?),
+                "preset" => {
+                    if v != "system" {
+                        return Err(format!(
+                            "ds1307 'preset' value '{v}' unknown (valid: 'system') in '{spec}'"
+                        ));
+                    }
+                    preset_seen = true;
+                }
+                _ => return Err(format!("unknown ds1307 param '{k}' in '{spec}'")),
+            }
+        }
+    }
+
+    let has_field = hour.is_some()
+        || minute.is_some()
+        || second.is_some()
+        || date.is_some()
+        || month.is_some()
+        || year.is_some()
+        || day_of_week.is_some();
+
+    if preset_seen && has_field {
+        return Err(format!(
+            "ds1307 'preset' and explicit register values are mutually exclusive in '{spec}'"
+        ));
+    }
+
+    if preset_seen {
+        let mut dev = Ds1307Device::new(addr);
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        dev.set_from_unix_seconds(secs);
+        return Ok(Arc::new(Mutex::new(dev)));
+    }
+
+    let regs = [
+        second.map(int_to_bcd).unwrap_or(0),
+        minute.map(int_to_bcd).unwrap_or(0),
+        hour.map(int_to_bcd).unwrap_or(0),
+        day_of_week.map(int_to_bcd).unwrap_or(0),
+        date.map(int_to_bcd).unwrap_or(0),
+        month.map(int_to_bcd).unwrap_or(0),
+        year.map(int_to_bcd).unwrap_or(0),
+        0, // control: brief defers; stays zero
+    ];
+    Ok(Arc::new(Mutex::new(Ds1307Device::with_initial_registers(
+        addr, regs,
+    ))))
+}
+
+fn parse_ds1307_range(key: &str, value: &str, lo: u8, hi: u8, spec: &str) -> Result<u8, String> {
+    let parsed: u32 = value
+        .parse()
+        .map_err(|_| format!("ds1307 '{key}' not a decimal number: '{value}' in '{spec}'"))?;
+    let n = u8::try_from(parsed).map_err(|_| {
+        format!("ds1307 '{key}' out of range: {parsed} (valid: {lo}-{hi}) in '{spec}'")
+    })?;
+    if !(lo..=hi).contains(&n) {
+        return Err(format!(
+            "ds1307 '{key}' out of range: {n} (valid: {lo}-{hi}) in '{spec}'"
+        ));
+    }
+    Ok(n)
 }
 
 fn parse_addr(s: &str) -> Option<u8> {
@@ -285,43 +357,107 @@ mod tests {
         }
     }
 
-    #[test]
-    fn build_ds1307_epoch_now_seeds_clock() {
-        // Read the year register through the bus to confirm epoch=now
-        // fired. Year stored as BCD; ≥0x25 means ≥2025, which is the
-        // floor we ship at.
-        let arc = build_i2c_device("ds1307@0x68?epoch=now").unwrap();
+    /// Helper: read the first `n` registers of a built ds1307 device
+    /// through the bus, returning raw BCD bytes.
+    fn read_ds1307_bytes(spec: &str, n: usize) -> Vec<u8> {
+        let arc = build_i2c_device(spec).unwrap();
         let mut g = arc.lock().unwrap();
         g.on_start();
-        assert_eq!(g.on_write_byte(0x06), crate::peripherals::i2c::Ack::Ack);
+        assert_eq!(g.on_write_byte(0x00), crate::peripherals::i2c::Ack::Ack);
         g.on_start();
-        let year_bcd = g.on_read_byte();
-        assert!(
-            year_bcd >= 0x25,
-            "expected epoch=now to seed at least year 2025, got BCD {year_bcd:#04x}"
-        );
+        (0..n).map(|_| g.on_read_byte()).collect()
     }
 
     #[test]
-    fn build_ds1307_epoch_explicit_seconds() {
-        // 2026-05-16 14:45:30 UTC = 1_778_942_730.
-        let arc = build_i2c_device("ds1307@0x68?epoch=1778942730").unwrap();
-        let mut g = arc.lock().unwrap();
-        g.on_start();
-        // Read pointer 0x00 → 7 bytes: sec, min, hr, dow, date, mon, yr.
-        assert_eq!(g.on_write_byte(0x00), crate::peripherals::i2c::Ack::Ack);
-        g.on_start();
-        let bytes: Vec<u8> = (0..7).map(|_| g.on_read_byte()).collect();
+    fn build_ds1307_with_time_params() {
+        // hour=12, minute=34, second=56 → registers [0x56, 0x34, 0x12, ...].
+        let bytes = read_ds1307_bytes("ds1307@0x68?hour=12&minute=34&second=56", 3);
+        assert_eq!(bytes, vec![0x56, 0x34, 0x12]);
+    }
+
+    #[test]
+    fn build_ds1307_with_full_date() {
+        // All 7 time keys; verify each register encodes correctly.
+        let spec = "ds1307@0x68?second=30&minute=45&hour=14&dow=7&date=16&month=5&year=26";
+        let bytes = read_ds1307_bytes(spec, 7);
         assert_eq!(bytes, vec![0x30, 0x45, 0x14, 0x07, 0x16, 0x05, 0x26]);
     }
 
     #[test]
-    fn build_ds1307_epoch_garbage_rejected() {
-        expect_err("ds1307@0x68?epoch=notanumber", "bad ds1307 epoch");
+    fn build_ds1307_preset_system() {
+        // preset=system reads SystemTime::now() at construction. We can't
+        // pin the host clock, but year ≥ 0x25 (2025, our floor) confirms
+        // the path executed. Generous tolerance for slow CI runners.
+        let bytes = read_ds1307_bytes("ds1307@0x68?preset=system", 7);
+        // bytes layout: [sec, min, hr, dow, date, mon, yr].
+        let year_bcd = bytes[6];
+        assert!(
+            year_bcd >= 0x25,
+            "expected preset=system to seed at least year 2025, got BCD {year_bcd:#04x}"
+        );
+        // Spot-check: month is 1-12 BCD; date is 1-31 BCD; hour < 24.
+        assert!((0x01..=0x12).contains(&bytes[5]), "month BCD: {:#04x}", bytes[5]);
+        assert!(bytes[2] <= 0x23, "hour BCD: {:#04x}", bytes[2]);
+    }
+
+    #[test]
+    fn build_ds1307_preset_conflicts_with_hour() {
+        expect_err(
+            "ds1307@0x68?preset=system&hour=12",
+            "ds1307 'preset' and explicit register values are mutually exclusive",
+        );
+    }
+
+    #[test]
+    fn build_ds1307_preset_conflicts_with_dow() {
+        // Reverse order also detected.
+        expect_err(
+            "ds1307@0x68?dow=3&preset=system",
+            "ds1307 'preset' and explicit register values are mutually exclusive",
+        );
+    }
+
+    #[test]
+    fn build_ds1307_out_of_range_rejected() {
+        expect_err("ds1307@0x68?hour=24", "'hour' out of range: 24");
+        expect_err("ds1307@0x68?minute=60", "'minute' out of range: 60");
+        expect_err("ds1307@0x68?second=60", "'second' out of range: 60");
+        expect_err("ds1307@0x68?date=0", "'date' out of range: 0");
+        expect_err("ds1307@0x68?date=32", "'date' out of range: 32");
+        expect_err("ds1307@0x68?month=0", "'month' out of range: 0");
+        expect_err("ds1307@0x68?month=13", "'month' out of range: 13");
+        expect_err("ds1307@0x68?year=100", "'year' out of range: 100");
+        expect_err("ds1307@0x68?dow=0", "'dow' out of range: 0");
+        expect_err("ds1307@0x68?dow=8", "'dow' out of range: 8");
+    }
+
+    #[test]
+    fn build_ds1307_unknown_preset_value_rejected() {
+        expect_err(
+            "ds1307@0x68?preset=zero",
+            "ds1307 'preset' value 'zero' unknown",
+        );
+    }
+
+    #[test]
+    fn build_ds1307_non_numeric_field_rejected() {
+        expect_err(
+            "ds1307@0x68?hour=twelve",
+            "ds1307 'hour' not a decimal number",
+        );
     }
 
     #[test]
     fn build_ds1307_unknown_param_rejected() {
         expect_err("ds1307@0x68?temp=25.0", "unknown ds1307 param");
+    }
+
+    #[test]
+    fn build_ds1307_partial_fields_default_unspecified_to_zero() {
+        // hour=12 alone leaves minute, second, date, month, year, dow at
+        // their default zero — matching the brief's "all-zero default"
+        // and what cold-start hardware would give.
+        let bytes = read_ds1307_bytes("ds1307@0x68?hour=12", 7);
+        assert_eq!(bytes, vec![0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x00]);
     }
 }
