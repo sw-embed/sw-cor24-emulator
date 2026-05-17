@@ -304,3 +304,37 @@ fn tmp101_drives_bus_state_machine() {
         "expected the TMP101 address (0x4A) to have been observed",
     );
 }
+
+/// SSD1306 attached via the CLI-style spec must be addressable on the
+/// bus with the default 128×64 layout.
+#[test]
+fn cli_ssd1306_attach() {
+    use cor24_emulator::peripherals::i2c::build_i2c_device;
+
+    let dev = build_i2c_device("ssd1306@0x3C").expect("registry should accept the spec");
+    let mut core = EmulatorCore::new();
+    core.attach_i2c_device_shared(dev)
+        .expect("attach should succeed");
+
+    let attached = core
+        .i2c()
+        .addresses
+        .lookup(0x3C)
+        .expect("ssd1306 must be addressable at 0x3C");
+    let g = attached.lock().unwrap();
+    assert_eq!(g.name(), "ssd1306");
+}
+
+/// `--i2c-device 'ssd1306@0x3C?width=128&height=32'` must accept the
+/// alternate panel dimensions.
+#[test]
+fn cli_ssd1306_with_size() {
+    use cor24_emulator::peripherals::i2c::build_i2c_device;
+
+    let dev = build_i2c_device("ssd1306@0x3C?width=128&height=32")
+        .expect("registry should accept width=128&height=32");
+    let mut core = EmulatorCore::new();
+    core.attach_i2c_device_shared(dev)
+        .expect("attach should succeed");
+    assert!(core.i2c().addresses.lookup(0x3C).is_some());
+}
