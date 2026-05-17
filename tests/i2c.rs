@@ -249,6 +249,40 @@ fn tmp101_lgo_prints_negative_temperature() {
 // loop to elapse between reads, which is too slow for a unit test.
 // The CLI-step's web-surface-smoke fixture will pin the API shape.)
 
+/// DS1307 attached via the CLI-style spec must respond on the bus with
+/// the BCD-encoded register values the spec asked for. This is the
+/// integration test the dcxas brief calls for: the path from
+/// `build_i2c_device` → `EmulatorCore::attach_i2c_device_shared` →
+/// `AddressMap::lookup` → `I2cDevice::on_read_byte` is the same one
+/// the CLI uses, end-to-end.
+#[test]
+fn ds1307_cli_spec_seeds_registers_visible_through_bus() {
+    use cor24_emulator::peripherals::i2c::build_i2c_device;
+
+    let dev = build_i2c_device("ds1307@0x68?hour=12&minute=34&second=56")
+        .expect("registry should accept the spec");
+    let mut core = EmulatorCore::new();
+    core.attach_i2c_device_shared(dev)
+        .expect("attach should succeed");
+
+    // Now reach back through the bus's address map (the same path the
+    // bus state machine consults on every transaction) and execute the
+    // pointer-set / read sequence a real master would.
+    let dev_via_bus = core
+        .i2c()
+        .addresses
+        .lookup(0x68)
+        .expect("device must be addressable at 0x68");
+    let mut g = dev_via_bus.lock().unwrap();
+    g.on_start();
+    assert_eq!(g.on_write_byte(0x02), cor24_emulator::peripherals::i2c::Ack::Ack);
+    g.on_start();
+    // Reading at pointer 0x02 returns the Hours register first.
+    assert_eq!(g.on_read_byte(), 0x12);
+    // Auto-increment: next byte is the day-of-week register (default 0).
+    assert_eq!(g.on_read_byte(), 0x00);
+}
+
 #[test]
 fn tmp101_drives_bus_state_machine() {
     // Step A.3 observability: running the fixture should trigger at

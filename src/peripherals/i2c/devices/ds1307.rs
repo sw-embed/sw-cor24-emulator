@@ -31,25 +31,38 @@
 //! crystal just counts oscillator ticks regardless of what year the
 //! human at the bench thinks it is. We model this honestly:
 //!
-//! - The device exposes `set_from_unix_seconds(secs)` as the single
-//!   public seed entry. It does *not* call `SystemTime::now()`
-//!   internally — that would couple chip emulation to host wall-clock
-//!   and break deterministic tests.
+//! - Initial state is set at construction time via
+//!   [`Ds1307Device::with_initial_registers`] (eight pre-BCD bytes) or
+//!   `new(addr)` for the all-zero default. The constructor is the
+//!   single source of truth for initial register state.
 //! - `tick_second()` is the master-driven advance; the bus owner
 //!   (web run-loop, CLI test, whatever) calls it once per emulated
 //!   second.
+//! - Mid-session updates use [`set_time`] / [`set_date`] (binary
+//!   integers, BCD-encoded internally) — that's what the web panel's
+//!   slider hits.
 //! - "Battery backup" is a *consumer-side* persistence concern. The
-//!   web UI saves `(rtc_unix_secs, host_unix_secs)` to local storage
-//!   on shutdown, and on next startup computes
-//!   `current_rtc = saved_rtc + (now_host - saved_host)`, passing the
-//!   result back through `set_from_unix_seconds`. The emulator stays
-//!   pure; the persistence math lives where state actually persists.
+//!   web UI saves `(set_value, set_at_ms)` to local storage on user
+//!   write; on next page load it projects forward by `Date.now() -
+//!   set_at_ms` and passes the resulting h/m/s back through the CLI
+//!   spec (`?hour=&minute=&second=`). The emulator stays stateless
+//!   across CLI invocations; the persistence math lives where state
+//!   actually persists.
 //!
-//! The CLI's `--i2c-device ds1307@<addr>?epoch=now` (or
-//! `?epoch=<unix_seconds>`) is sugar for the same `set_from_unix_seconds`
-//! path — the registry parser handles the `SystemTime::now()` call
-//! when it sees `now`, so the host-clock dependency stays at the
-//! consumer boundary.
+//! ## CLI surface
+//!
+//! `--i2c-device ds1307@<addr>` accepts per-field params for direct
+//! register seeding (`?hour=12&minute=34&second=56&date=16&month=5&
+//! year=26&dow=7`, all optional, decimal in chip-valid ranges) and
+//! `?preset=system` to pull the host wall-clock at attach time. The
+//! two paths are mutually exclusive. No params = all-zero default.
+//!
+//! Library users who want to seed from a Unix timestamp compute the
+//! seven BCD fields themselves and pass them via
+//! `with_initial_registers`; an internal `set_from_unix_seconds`
+//! helper supports the `?preset=system` path but is not part of the
+//! public Rust API by design (off-pattern for both CLI users and the
+//! web panel).
 
 use crate::peripherals::i2c::device::{Ack, I2cDevice};
 
@@ -79,11 +92,20 @@ pub struct Ds1307Device {
 
 impl Ds1307Device {
     pub fn new(address: u8) -> Self {
+        Self::with_initial_registers(address, [0; 8])
+    }
+
+    /// Construct a DS1307 with explicit initial register contents.
+    /// `regs` is the 8-byte register array in chip order — seconds,
+    /// minutes, hours, day-of-week, date, month, year, control — each
+    /// already in BCD format (use [`int_to_bcd`] to encode binary
+    /// integers). `new(addr)` is `with_initial_registers(addr, [0; 8])`.
+    pub fn with_initial_registers(address: u8, regs: [u8; 8]) -> Self {
         Self {
             address: address & 0x7F,
             pointer: 0,
             write_idx: 0,
-            regs: [0; 8],
+            regs,
         }
     }
 
@@ -105,21 +127,18 @@ impl Ds1307Device {
         self.regs[REG_DAY_OF_WEEK] = int_to_bcd(day_of_week.clamp(1, 7));
     }
 
-    /// Seed the chip from a Unix epoch timestamp (UTC seconds since
-    /// 1970-01-01). Does full leap-year math during the day→YMD
-    /// decomposition — required to map Unix seconds back to a calendar
-    /// date correctly. (`tick_second()` itself stays leap-year-naive
-    /// per the original brief; the two concerns are independent.)
+    /// Crate-internal helper: seed the chip from a Unix epoch
+    /// timestamp (UTC seconds since 1970-01-01). Backs the registry's
+    /// `?preset=system` path; intentionally not part of the public
+    /// Rust API (see module docs — library consumers compute their
+    /// own BCD fields and use `with_initial_registers`).
     ///
-    /// Years map as the DS1307's two-digit form: 2000→00, 2026→26, ...,
-    /// wrapping mod 100 past 2099.
-    ///
-    /// This is the only public seed entry by design. Pulling the host
-    /// wall-clock is a consumer concern: the CLI registry does it when
-    /// it sees `?epoch=now`; the web UI does it (and the
-    /// battery-backed-persistence math) when restoring from local
-    /// storage. See the module docs for the persistence pattern.
-    pub fn set_from_unix_seconds(&mut self, secs: u64) {
+    /// Does full leap-year math during the day→YMD decomposition.
+    /// (`tick_second()` itself stays leap-year-naive per the original
+    /// brief; the two concerns are independent.) Years map as the
+    /// DS1307's two-digit form: 2000→00, 2026→26, ..., wrapping mod
+    /// 100 past 2099.
+    pub(crate) fn set_from_unix_seconds(&mut self, secs: u64) {
         let (year, month, date, dow, hour, minute, second) = decompose_unix_seconds(secs);
         self.set_date(year, month, date, dow);
         self.set_time(hour, minute, second);
@@ -212,11 +231,14 @@ impl Ds1307Device {
     }
 }
 
-fn int_to_bcd(n: u8) -> u8 {
+/// Encode a binary integer (0–99) as packed BCD. Convenience for
+/// callers building the `regs` array for [`Ds1307Device::with_initial_registers`].
+pub fn int_to_bcd(n: u8) -> u8 {
     ((n / 10) << 4) | (n % 10)
 }
 
-fn bcd_to_int(b: u8) -> u8 {
+/// Decode packed BCD (one byte, two digits) to a binary integer.
+pub fn bcd_to_int(b: u8) -> u8 {
     ((b >> 4) * 10) + (b & 0x0F)
 }
 
@@ -336,7 +358,6 @@ impl I2cDevice for Ds1307Device {
 pub trait Ds1307HandleExt {
     fn set_time(&self, hour: u8, minute: u8, second: u8);
     fn set_date(&self, year: u8, month: u8, date: u8, day_of_week: u8);
-    fn set_from_unix_seconds(&self, secs: u64);
     fn hour(&self) -> u8;
     fn minute(&self) -> u8;
     fn second(&self) -> u8;
@@ -353,9 +374,6 @@ impl Ds1307HandleExt for crate::peripherals::i2c::I2cHandle<Ds1307Device> {
     }
     fn set_date(&self, year: u8, month: u8, date: u8, day_of_week: u8) {
         self.with(|d| d.set_date(year, month, date, day_of_week));
-    }
-    fn set_from_unix_seconds(&self, secs: u64) {
-        self.with(|d| d.set_from_unix_seconds(secs));
     }
     fn hour(&self) -> u8 {
         self.with(|d| d.hour())
@@ -676,5 +694,26 @@ mod tests {
         assert_eq!(d.year(), 0);
         assert_eq!(d.hour(), 0);
         assert_eq!(d.second(), 0);
+    }
+
+    #[test]
+    fn with_initial_registers_round_trip() {
+        // 14:45:30 Sat 2026-05-16, control = 0.
+        let regs = [0x30, 0x45, 0x14, 0x07, 0x16, 0x05, 0x26, 0x00];
+        let d = Ds1307Device::with_initial_registers(0x68, regs);
+        assert_eq!(d.registers(), regs);
+        assert_eq!(d.hour(), 14);
+        assert_eq!(d.minute(), 45);
+        assert_eq!(d.second(), 30);
+        assert_eq!(d.year(), 26);
+    }
+
+    #[test]
+    fn new_delegates_to_with_initial_registers() {
+        // Single source of truth: both paths yield identical state.
+        assert_eq!(
+            Ds1307Device::new(0x68).registers(),
+            Ds1307Device::with_initial_registers(0x68, [0; 8]).registers(),
+        );
     }
 }
