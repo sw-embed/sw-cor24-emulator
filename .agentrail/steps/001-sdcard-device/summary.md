@@ -1,0 +1,1 @@
+SdCardDevice: SPI-mode SD card. CMD0/8/55+41/16/17/24 with file-backed image, registry sdcard[@cs=<n>][?file=<path>]. 18 unit tests + 1 integration test. cargo test/clippy green.

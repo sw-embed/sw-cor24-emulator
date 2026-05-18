@@ -1,0 +1,1 @@
+W25q32Device: Winbond W25Q32 4 MiB NOR flash. JEDEC ID, status reg, WEL/WIP timing via byte-clock countdown, read data with auto-increment, page program with 1→0 AND rule, sector/block/chip erase, ?file= persistence via seek+write. 19 unit tests + 1 integration test. cargo test/clippy green. Saga complete.
