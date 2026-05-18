@@ -1,0 +1,12 @@
+number = 1
+slug = "sdcard-device"
+status = "pending"
+description = """
+Implement Step 1 of brief 8 — SPI SD Card device (SD-mode protocol).
+
+**Rea..."""
+role = "production"
+context_files = []
+created_at = "2026-05-18T05:48:57"
+task_type = "spi-device-impl"
+commits = []

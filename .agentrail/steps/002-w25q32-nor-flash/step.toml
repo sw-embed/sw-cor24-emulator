@@ -1,0 +1,12 @@
+number = 2
+slug = "w25q32-nor-flash"
+status = "pending"
+description = """
+Implement Step 2 of brief 8 — Winbond W25Q32 NOR flash (4 MiB).
+
+**Read fir..."""
+role = "production"
+context_files = []
+created_at = "2026-05-18T05:49:17"
+task_type = "spi-device-impl"
+commits = []
