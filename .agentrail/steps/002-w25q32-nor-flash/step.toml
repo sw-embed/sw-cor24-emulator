@@ -1,6 +1,6 @@
 number = 2
 slug = "w25q32-nor-flash"
-status = "pending"
+status = "in-progress"
 description = """
 Implement Step 2 of brief 8 — Winbond W25Q32 NOR flash (4 MiB).
 

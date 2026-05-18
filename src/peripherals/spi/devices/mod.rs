@@ -5,7 +5,9 @@
 pub mod echo;
 pub mod sdcard;
 pub mod tmp125;
+pub mod w25q32;
 
 pub use echo::EchoDevice;
 pub use sdcard::{SdCardDevice, SdCardHandleExt};
 pub use tmp125::{Tmp125Device, Tmp125HandleExt};
+pub use w25q32::{W25q32Device, W25q32HandleExt};

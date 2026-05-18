@@ -284,3 +284,66 @@ fn cli_sdcard_attach_reads_known_sector() {
     drop(g);
     let _ = fs::remove_file(&path);
 }
+
+/// W25Q32 attached via the registry spec must round-trip a Page Program
+/// → Read Data cycle and persist the new bytes to the host file. Same
+/// shape as the sdcard integration test; covers the registry path the
+/// CLI flag would use once it exists.
+#[test]
+fn cli_w25q32_attach_program_read_round_trip() {
+    use cor24_emulator::peripherals::spi::build_spi_device;
+    use cor24_emulator::peripherals::spi::devices::w25q32::IMAGE_SIZE;
+    use std::fs;
+
+    let path = std::env::temp_dir().join(format!(
+        "cor24-w25q32-integration-{}.bin",
+        std::process::id(),
+    ));
+    fs::write(&path, vec![0xFFu8; IMAGE_SIZE]).expect("seed erased image");
+
+    let spec = format!("w25q32@cs=3?file={}", path.display());
+    let dev = build_spi_device(&spec).expect("build_spi_device should accept the spec");
+
+    let mut core = EmulatorCore::new();
+    core.attach_spi_device_shared(dev.clone());
+
+    let mut g = dev.lock().expect("device lock");
+
+    // 0x06 Write Enable.
+    let _ = g.on_select();
+    let _ = g.on_byte(0x06);
+    g.on_deselect();
+
+    // 0x02 Page Program at addr 0x1000 with 16 bytes 0..15.
+    let _ = g.on_select();
+    let _ = g.on_byte(0x02);
+    let _ = g.on_byte(0x00);
+    let _ = g.on_byte(0x10);
+    let _ = g.on_byte(0x00);
+    for i in 0..16u8 {
+        let _ = g.on_byte(i);
+    }
+    g.on_deselect();
+
+    // Read back the same range via 0x03.
+    let _ = g.on_select();
+    let _ = g.on_byte(0x03);
+    let _ = g.on_byte(0x00);
+    let _ = g.on_byte(0x10);
+    let first = g.on_byte(0x00); // MISO for the next exchange = image[addr]
+    let mut readback = vec![first];
+    for _ in 1..16u8 {
+        readback.push(g.on_byte(0xFF));
+    }
+    g.on_deselect();
+
+    let expected: Vec<u8> = (0..16u8).collect();
+    assert_eq!(readback, expected);
+
+    // Verify the host file reflects the program.
+    let on_disk = fs::read(&path).expect("read back image");
+    assert_eq!(&on_disk[0x1000..0x1010], expected.as_slice());
+
+    drop(g);
+    let _ = fs::remove_file(&path);
+}

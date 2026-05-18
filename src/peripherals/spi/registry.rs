@@ -11,6 +11,7 @@
 //!   - `echo[?seed=<n>]`            — universal echo test slave.
 //!   - `tmp125[?temp=<f>]`          — TI TMP125 temperature sensor.
 //!   - `sdcard[@cs=<n>][?file=<path>]` — SD card in SPI mode.
+//!   - `w25q32[@cs=<n>][?file=<path>]` — Winbond W25Q32 NOR flash (4 MiB).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -19,6 +20,7 @@ use super::device::SpiDevice;
 use super::devices::echo::EchoDevice;
 use super::devices::sdcard::{DEFAULT_CS as SDCARD_DEFAULT_CS, SdCardDevice};
 use super::devices::tmp125::Tmp125Device;
+use super::devices::w25q32::{DEFAULT_CS as W25Q32_DEFAULT_CS, W25q32Device};
 
 pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String> {
     let (head, params) = match spec.split_once('?') {
@@ -26,7 +28,7 @@ pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String>
         None => (spec, None),
     };
     let (name, cs_override) = split_cs(head, spec)?;
-    if cs_override.is_some() && !matches!(name, "sdcard") {
+    if cs_override.is_some() && !matches!(name, "sdcard" | "w25q32") {
         return Err(format!(
             "SPI device '{name}' doesn't support '@cs=': {spec}"
         ));
@@ -93,6 +95,28 @@ pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String>
                     d = SdCardDevice::with_image(d.image(), None, cs);
                 }
                 d
+            };
+            Ok(Arc::new(Mutex::new(dev)))
+        }
+        "w25q32" => {
+            let cs = cs_override.unwrap_or(W25Q32_DEFAULT_CS);
+            let mut file: Option<PathBuf> = None;
+            if let Some(p) = params {
+                for kv in p.split('&') {
+                    let (k, v) = kv
+                        .split_once('=')
+                        .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
+                    match k {
+                        "file" => file = Some(PathBuf::from(v)),
+                        _ => return Err(format!("unknown w25q32 param '{k}' in '{spec}'")),
+                    }
+                }
+            }
+            let dev = if let Some(path) = file {
+                W25q32Device::from_file(&path, cs)
+                    .map_err(|e| format!("w25q32 file '{}': {e}", path.display()))?
+            } else {
+                W25q32Device::with_image(vec![0xFF; super::devices::w25q32::IMAGE_SIZE], None, cs)
             };
             Ok(Arc::new(Mutex::new(dev)))
         }
@@ -237,5 +261,31 @@ mod tests {
     fn echo_rejects_at_cs() {
         let err = expect_err("echo@cs=1");
         assert!(err.contains("doesn't support '@cs="), "got: {err}");
+    }
+
+    #[test]
+    fn build_w25q32_default() {
+        let arc = build_spi_device("w25q32").unwrap();
+        let g = arc.lock().unwrap();
+        assert_eq!(g.name(), "w25q32");
+    }
+
+    #[test]
+    fn build_w25q32_with_cs() {
+        let arc = build_spi_device("w25q32@cs=3").unwrap();
+        let g = arc.lock().unwrap();
+        assert_eq!(g.name(), "w25q32");
+    }
+
+    #[test]
+    fn build_w25q32_unknown_param_rejected() {
+        let err = expect_err("w25q32?temp=25.0");
+        assert!(err.contains("unknown w25q32 param"), "got: {err}");
+    }
+
+    #[test]
+    fn build_w25q32_missing_file_rejected() {
+        let err = expect_err("w25q32?file=/nonexistent/path/that/should/never/exist");
+        assert!(err.contains("w25q32 file"), "got: {err}");
     }
 }
