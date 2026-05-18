@@ -1,6 +1,6 @@
 number = 1
 slug = "sdcard-device"
-status = "in-progress"
+status = "completed"
 description = """
 Implement Step 1 of brief 8 — SPI SD Card device (SD-mode protocol).
 
@@ -8,5 +8,6 @@ Implement Step 1 of brief 8 — SPI SD Card device (SD-mode protocol).
 role = "production"
 context_files = []
 created_at = "2026-05-18T05:48:57"
+completed_at = "2026-05-18T06:16:11"
 task_type = "spi-device-impl"
-commits = []
+commits = ["35161a93758c7318134be82386c6089d349a3117"]
