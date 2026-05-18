@@ -1,24 +1,36 @@
 //! CLI device registry for SPI.
 //!
 //! `build_spi_device` is the string-keyed registry the CLI parses. SPI
-//! is single-slave today (plan §9: future multi-slave SELN bitmask),
-//! so spec syntax has no `@<addr>` — `<name>[?key=val&...]`.
+//! is single-slave today (plan §9: future multi-slave SELN bitmask).
+//! Spec syntax: `<name>[@cs=<n>][?key=val&...]`. The `@cs=<n>` form is
+//! parsed and stored on the device for observation but not yet
+//! enforced — multi-slave routing lands later. Older specs without
+//! `@cs=` continue to parse.
 //!
 //! Recognised devices:
 //!   - `echo[?seed=<n>]`            — universal echo test slave.
 //!   - `tmp125[?temp=<f>]`          — TI TMP125 temperature sensor.
+//!   - `sdcard[@cs=<n>][?file=<path>]` — SD card in SPI mode.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::device::SpiDevice;
 use super::devices::echo::EchoDevice;
+use super::devices::sdcard::{DEFAULT_CS as SDCARD_DEFAULT_CS, SdCardDevice};
 use super::devices::tmp125::Tmp125Device;
 
 pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String> {
-    let (name, params) = match spec.split_once('?') {
-        Some((head, tail)) => (head, Some(tail)),
+    let (head, params) = match spec.split_once('?') {
+        Some((h, t)) => (h, Some(t)),
         None => (spec, None),
     };
+    let (name, cs_override) = split_cs(head, spec)?;
+    if cs_override.is_some() && !matches!(name, "sdcard") {
+        return Err(format!(
+            "SPI device '{name}' doesn't support '@cs=': {spec}"
+        ));
+    }
     match name {
         "echo" => {
             let mut seed: u8 = 0;
@@ -57,7 +69,51 @@ pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String>
             }
             Ok(Arc::new(Mutex::new(dev)))
         }
+        "sdcard" => {
+            let cs = cs_override.unwrap_or(SDCARD_DEFAULT_CS);
+            let mut file: Option<PathBuf> = None;
+            if let Some(p) = params {
+                for kv in p.split('&') {
+                    let (k, v) = kv
+                        .split_once('=')
+                        .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
+                    match k {
+                        "file" => file = Some(PathBuf::from(v)),
+                        _ => return Err(format!("unknown sdcard param '{k}' in '{spec}'")),
+                    }
+                }
+            }
+            let dev = if let Some(path) = file {
+                SdCardDevice::from_file(&path, cs)
+                    .map_err(|e| format!("sdcard file '{}': {e}", path.display()))?
+            } else {
+                let mut d = SdCardDevice::new();
+                // Apply CS override to the in-memory scratch device.
+                if cs_override.is_some() {
+                    d = SdCardDevice::with_image(d.image(), None, cs);
+                }
+                d
+            };
+            Ok(Arc::new(Mutex::new(dev)))
+        }
         other => Err(format!("unknown SPI device '{other}'")),
+    }
+}
+
+/// Split the head (before `?`) into `(name, cs_override)`. The head
+/// form is `<name>[@cs=<n>]`. Examples: `sdcard` → ("sdcard", None);
+/// `sdcard@cs=2` → ("sdcard", Some(2)).
+fn split_cs<'a>(head: &'a str, spec: &str) -> Result<(&'a str, Option<u8>), String> {
+    match head.split_once('@') {
+        None => Ok((head, None)),
+        Some((name, rest)) => {
+            let cs_str = rest
+                .strip_prefix("cs=")
+                .ok_or_else(|| format!("bad '@' qualifier '@{rest}' in '{spec}' (expected '@cs=<n>')"))?;
+            let cs = parse_u8(cs_str)
+                .ok_or_else(|| format!("bad cs '{cs_str}' in '{spec}'"))?;
+            Ok((name, Some(cs)))
+        }
     }
 }
 
@@ -143,5 +199,43 @@ mod tests {
     fn build_unknown_param_rejected() {
         let err = expect_err("echo?wrap=10");
         assert!(err.contains("unknown echo param"), "got: {err}");
+    }
+
+    #[test]
+    fn build_sdcard_default() {
+        let arc = build_spi_device("sdcard").unwrap();
+        let g = arc.lock().unwrap();
+        assert_eq!(g.name(), "sdcard");
+    }
+
+    #[test]
+    fn build_sdcard_with_cs() {
+        let arc = build_spi_device("sdcard@cs=2").unwrap();
+        let g = arc.lock().unwrap();
+        assert_eq!(g.name(), "sdcard");
+    }
+
+    #[test]
+    fn build_sdcard_unknown_param_rejected() {
+        let err = expect_err("sdcard?temp=25.0");
+        assert!(err.contains("unknown sdcard param"), "got: {err}");
+    }
+
+    #[test]
+    fn build_sdcard_bad_cs_rejected() {
+        let err = expect_err("sdcard@cs=oops");
+        assert!(err.contains("bad cs"), "got: {err}");
+    }
+
+    #[test]
+    fn build_sdcard_missing_file_rejected() {
+        let err = expect_err("sdcard?file=/nonexistent/path/that/should/never/exist");
+        assert!(err.contains("sdcard file"), "got: {err}");
+    }
+
+    #[test]
+    fn echo_rejects_at_cs() {
+        let err = expect_err("echo@cs=1");
+        assert!(err.contains("doesn't support '@cs="), "got: {err}");
     }
 }

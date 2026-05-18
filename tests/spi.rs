@@ -232,3 +232,55 @@ fn tmp125_lgo_prints_negative_temperature() {
         "expected '-12.50\\n' in UART output, got {out:?}",
     );
 }
+
+/// SD card attached via the registry spec must respond to CMD17 with
+/// the host-backed image's bytes. This is the integration test brief
+/// 8 §Step 1 asks for. (`--spi-device` CLI plumbing is a separate
+/// follow-up; this test feeds the same Rust path the CLI would use.)
+#[test]
+fn cli_sdcard_attach_reads_known_sector() {
+    use cor24_emulator::peripherals::spi::build_spi_device;
+    use std::fs;
+
+    let path = std::env::temp_dir().join(format!(
+        "cor24-sdcard-integration-{}.img",
+        std::process::id(),
+    ));
+    let mut img = vec![0u8; 4 * 512];
+    let pattern: Vec<u8> = (0..512).map(|i| ((i * 3) & 0xFF) as u8).collect();
+    img[2 * 512..3 * 512].copy_from_slice(&pattern);
+    fs::write(&path, &img).expect("write seed image");
+
+    let spec = format!("sdcard@cs=2?file={}", path.display());
+    let dev = build_spi_device(&spec).expect("build_spi_device should accept the spec");
+
+    let mut core = EmulatorCore::new();
+    core.attach_spi_device_shared(dev.clone());
+
+    // Drive the CMD17 sequence through the SpiDevice trait — same
+    // byte-by-byte API the bus state machine uses.
+    let mut g = dev.lock().expect("device lock");
+    let _ = g.on_select();
+    let cmd = [0x51u8, 0x00, 0x00, 0x00, 0x02, 0xFF];
+    let mut last = 0xFF;
+    for &b in &cmd {
+        last = g.on_byte(b);
+    }
+    assert_eq!(last, 0x00, "CMD17 R1 should be 0x00 (success)");
+
+    // Drain until the 0xFE data token.
+    let mut saw_token = false;
+    for _ in 0..32 {
+        if g.on_byte(0xFF) == 0xFE {
+            saw_token = true;
+            break;
+        }
+    }
+    assert!(saw_token, "expected 0xFE data token within 32 wait clocks");
+
+    let data: Vec<u8> = (0..512).map(|_| g.on_byte(0xFF)).collect();
+    assert_eq!(data, pattern, "CMD17 must stream the seeded sector contents");
+
+    drop(g);
+    let _ = fs::remove_file(&path);
+}

@@ -1,6 +1,6 @@
 number = 1
 slug = "sdcard-device"
-status = "pending"
+status = "in-progress"
 description = """
 Implement Step 1 of brief 8 — SPI SD Card device (SD-mode protocol).
 
