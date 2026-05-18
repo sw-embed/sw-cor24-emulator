@@ -1,0 +1,11 @@
+{
+  "task_type": "spi-device-impl",
+  "state": {
+    "number": 2,
+    "step": "w25q32-nor-flash"
+  },
+  "action": "Mirrored sdcard.rs state-machine shape with tx_buf for finite responses + state-based streams for continuous reads. Added W25_DEFAULT_CS=3 and extended registry's @cs= forward-compat allowlist. Honored faithful NOR semantics (AND rule) and on-CS-deselect commit timing. Fixed two test setup bugs where slice ranges didn't cover the bracketing-byte assertions and three clippy if-can-be-collapsed warnings with guarded match arms.",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-05-18T07:01:08"
+}

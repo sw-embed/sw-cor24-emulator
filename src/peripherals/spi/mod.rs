@@ -7,6 +7,9 @@ pub mod handle;
 pub mod registry;
 
 pub use device::SpiDevice;
-pub use devices::{EchoDevice, Tmp125Device, Tmp125HandleExt};
+pub use devices::{
+    EchoDevice, SdCardDevice, SdCardHandleExt, Tmp125Device, Tmp125HandleExt, W25q32Device,
+    W25q32HandleExt,
+};
 pub use handle::SpiHandle;
 pub use registry::build_spi_device;

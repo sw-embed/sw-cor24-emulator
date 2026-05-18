@@ -232,3 +232,118 @@ fn tmp125_lgo_prints_negative_temperature() {
         "expected '-12.50\\n' in UART output, got {out:?}",
     );
 }
+
+/// SD card attached via the registry spec must respond to CMD17 with
+/// the host-backed image's bytes. This is the integration test brief
+/// 8 §Step 1 asks for. (`--spi-device` CLI plumbing is a separate
+/// follow-up; this test feeds the same Rust path the CLI would use.)
+#[test]
+fn cli_sdcard_attach_reads_known_sector() {
+    use cor24_emulator::peripherals::spi::build_spi_device;
+    use std::fs;
+
+    let path = std::env::temp_dir().join(format!(
+        "cor24-sdcard-integration-{}.img",
+        std::process::id(),
+    ));
+    let mut img = vec![0u8; 4 * 512];
+    let pattern: Vec<u8> = (0..512).map(|i| ((i * 3) & 0xFF) as u8).collect();
+    img[2 * 512..3 * 512].copy_from_slice(&pattern);
+    fs::write(&path, &img).expect("write seed image");
+
+    let spec = format!("sdcard@cs=2?file={}", path.display());
+    let dev = build_spi_device(&spec).expect("build_spi_device should accept the spec");
+
+    let mut core = EmulatorCore::new();
+    core.attach_spi_device_shared(dev.clone());
+
+    // Drive the CMD17 sequence through the SpiDevice trait — same
+    // byte-by-byte API the bus state machine uses.
+    let mut g = dev.lock().expect("device lock");
+    let _ = g.on_select();
+    let cmd = [0x51u8, 0x00, 0x00, 0x00, 0x02, 0xFF];
+    let mut last = 0xFF;
+    for &b in &cmd {
+        last = g.on_byte(b);
+    }
+    assert_eq!(last, 0x00, "CMD17 R1 should be 0x00 (success)");
+
+    // Drain until the 0xFE data token.
+    let mut saw_token = false;
+    for _ in 0..32 {
+        if g.on_byte(0xFF) == 0xFE {
+            saw_token = true;
+            break;
+        }
+    }
+    assert!(saw_token, "expected 0xFE data token within 32 wait clocks");
+
+    let data: Vec<u8> = (0..512).map(|_| g.on_byte(0xFF)).collect();
+    assert_eq!(data, pattern, "CMD17 must stream the seeded sector contents");
+
+    drop(g);
+    let _ = fs::remove_file(&path);
+}
+
+/// W25Q32 attached via the registry spec must round-trip a Page Program
+/// → Read Data cycle and persist the new bytes to the host file. Same
+/// shape as the sdcard integration test; covers the registry path the
+/// CLI flag would use once it exists.
+#[test]
+fn cli_w25q32_attach_program_read_round_trip() {
+    use cor24_emulator::peripherals::spi::build_spi_device;
+    use cor24_emulator::peripherals::spi::devices::w25q32::IMAGE_SIZE;
+    use std::fs;
+
+    let path = std::env::temp_dir().join(format!(
+        "cor24-w25q32-integration-{}.bin",
+        std::process::id(),
+    ));
+    fs::write(&path, vec![0xFFu8; IMAGE_SIZE]).expect("seed erased image");
+
+    let spec = format!("w25q32@cs=3?file={}", path.display());
+    let dev = build_spi_device(&spec).expect("build_spi_device should accept the spec");
+
+    let mut core = EmulatorCore::new();
+    core.attach_spi_device_shared(dev.clone());
+
+    let mut g = dev.lock().expect("device lock");
+
+    // 0x06 Write Enable.
+    let _ = g.on_select();
+    let _ = g.on_byte(0x06);
+    g.on_deselect();
+
+    // 0x02 Page Program at addr 0x1000 with 16 bytes 0..15.
+    let _ = g.on_select();
+    let _ = g.on_byte(0x02);
+    let _ = g.on_byte(0x00);
+    let _ = g.on_byte(0x10);
+    let _ = g.on_byte(0x00);
+    for i in 0..16u8 {
+        let _ = g.on_byte(i);
+    }
+    g.on_deselect();
+
+    // Read back the same range via 0x03.
+    let _ = g.on_select();
+    let _ = g.on_byte(0x03);
+    let _ = g.on_byte(0x00);
+    let _ = g.on_byte(0x10);
+    let first = g.on_byte(0x00); // MISO for the next exchange = image[addr]
+    let mut readback = vec![first];
+    for _ in 1..16u8 {
+        readback.push(g.on_byte(0xFF));
+    }
+    g.on_deselect();
+
+    let expected: Vec<u8> = (0..16u8).collect();
+    assert_eq!(readback, expected);
+
+    // Verify the host file reflects the program.
+    let on_disk = fs::read(&path).expect("read back image");
+    assert_eq!(&on_disk[0x1000..0x1010], expected.as_slice());
+
+    drop(g);
+    let _ = fs::remove_file(&path);
+}

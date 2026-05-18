@@ -1,687 +1,296 @@
-# COR24 emulator — I2C and SPI peripheral support
+# Brief: SPI SD Card + W25Q32 NOR Flash devices (two-step saga)
 
-Plan for adding I2C support to the COR24 ISA emulator now, with a parallel
-design sketched for SPI to add later. Targets the existing Rust emulator
-at `sw-cor24-emulator.git` (the same crate that already emulates LED/switch
-and UART at the addresses mapped by the COR24-TB FPGA design).
+**Owner:** dcemu
+**Branch:** `pr/spi-sdcard-and-nor-flash` (single saga, two steps; each step its own commit)
+**Repo:** `sw-cor24-emulator`
+**Drafted by:** mike (2026-05-18)
 
-## 1. Three-layer scope
+## Why this brief exists
 
-This work has three distinct deliverables, and most design choices fall
-out of getting the boundary between them right:
+dcxas and dwxas are queued to add two new SPI demos: an **SD card
+reader** (read sectors from a host-file-backed disk image) and a
+**NOR flash demo** (read JEDEC ID, erase a sector, program a known
+pattern, read it back). Both need new SPI device models in the
+emulator. This brief is the upstream blocker.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Layer 1: Guest applications                                     │
-│   C programs + libi2c / libspi running on the COR24             │
-│   (already exist in i2cspi/tmp101 and i2cspi/tmp125)            │
-└──────────────────────┬──────────────────────────────────────────┘
-                       │ MMIO writes/reads to GPIO-style addresses
-                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ Layer 2: Bus MMIO emulation (in CPU emulator core)              │
-│   Models the FPGA's I2C/SPI line registers exactly. Reconstructs│
-│   logical bus events from line transitions. Routes events to    │
-│   whatever device(s) are currently attached.                    │
-└──────────────────────┬──────────────────────────────────────────┘
-                       │ Bus event API: on_start / on_byte / on_stop / ...
-                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ Layer 3: Pluggable virtual devices                              │
-│   Implementations of an I2cSlave / SpiSlave trait for each chip │
-│   we want to model: TMP101, TMP125, DS3231 RTC, BME280, an LCD, │
-│   rotary encoder, EEPROMs, etc. New devices = new files.        │
-└─────────────────────────────────────────────────────────────────┘
-```
+The hardware target is the user's actual setup: 4 MiB W25Q32 NOR
+flash modules (NOT the 16 MiB W25Q128) — match that exact size and
+JEDEC ID. SD cards use the SPI-mode protocol (not native SDIO).
 
-Layers 1 and 3 grow independently over time (more demos, more
-chip models). Layer 2 is small, central, and ideally written once.
+## Cross-repo coordination
 
-The unstated fourth concern — **demoability** — is that layer 1 examples
-are how a user learns to write COR24 I2C/SPI code, and layer 3 device
-models are how that code can run anywhere (CI, browser, laptop) without
-real hardware. So both layers double as documentation when the suite is
-representative.
+Downstream of this brief (both block until `sw-cor24-emulator/main`
+ships):
 
-## 2. Goals
+- [`dcxas-spi-sdcard-and-nor-flash-demos.md`](dcxas-spi-sdcard-and-nor-flash-demos.md)
+  — assembler-side demos.
+- [`dwxas-spi-sdcard-and-nor-flash-panels.md`](dwxas-spi-sdcard-and-nor-flash-panels.md)
+  — web panels + dropdown entries (including a file-upload widget
+  for the SD card image).
 
-- Run the existing `i2cspi/tmp101/tmp101.lgo` demo end-to-end in the
-  emulator and produce the same temperature output as the FPGA board.
-- Match the FPGA MMIO layout exactly (`0xFF0020`/`0xFF0021` for I2C,
-  `0xFF0030..0xFF0032` for SPI) so guest binaries are bit-identical
-  between FPGA and emulator.
-- Make the device layer a **public, documented extension point**: a
-  third party (or future-you) writes one Rust file implementing a trait
-  and registers it; no edits to the bus core, no fork.
-- Expose a chronological transaction log (analogous to `UartLog`) so the
-  CLI and Web UI can show what's happening on the bus.
-- Keep SPI design symmetric with I2C so phase 2 is mostly mechanical.
+Reference patterns to mirror:
+- `src/peripherals/spi/devices/tmp125.rs` — existing SPI device shape.
+- `src/peripherals/spi/devices/echo.rs` — simplest device example.
+- `src/peripherals/i2c/devices/ds1307.rs` — host-side persistence
+  via the registry params (the DS1307's `?preset=system` pattern is
+  the closest analogue for "user-controlled initial state").
+- `src/cpu/spi_bus.rs` — bus state machine; you know it best.
 
-Non-goals: cycle-accurate timing, multi-master arbitration, 10-bit I2C
-addresses, SPI modes other than CPOL=0/CPHA=0 (which is what
-`spixchg.s` implements).
+## Step 1: SDCardDevice (SPI mode)
 
-## 3. Layer 1 — Guest applications
+### What
 
-### 3.1 What exists today
+Add `src/peripherals/spi/devices/sdcard.rs` (and re-export from
+`devices/mod.rs`, `peripherals/spi/mod.rs`). Implement the minimal
+SD-SPI command set needed for boot + read + write:
 
-```
-i2cspi/tmp101/
-  i2cio.h         #define I2CBASE 0xFF0020 / SCL=+0 / SDA=+1
-  libi2c.c        i2cstart, i2cstop, i2cwrite, i2cread (bit-banged)
-  libi2c.h        public interface
-  tmp101.c        configures TMP101 at 0x4A, prints temperature in °C
-  tmp101.lgo      assembled binary — the emulator's first integration test
+| Command | Hex | Purpose | Response |
+|---|---|---|---|
+| CMD0 | `0x40 00 00 00 00 95` | GO_IDLE_STATE | R1 = `0x01` (idle) |
+| CMD8 | `0x48 00 00 01 AA 87` | SEND_IF_COND (SDHC check) | R7 = `0x01 00 00 01 AA` |
+| ACMD41 | `0x77` then `0x69 40...` | SD_SEND_OP_COND | R1 = `0x00` (ready) after first call |
+| CMD16 | `0x50` + 4-byte arg | SET_BLOCKLEN | R1 = `0x00` (accept; we hard-code 512 anyway) |
+| CMD17 | `0x51` + 4-byte sector | READ_SINGLE_BLOCK | R1=`0x00`, then `0xFE` data token, 512 bytes, 2 CRC bytes |
+| CMD24 | `0x58` + 4-byte sector | WRITE_BLOCK | R1=`0x00`, await `0xFE` from master, 512 bytes, 2 CRC bytes, then "data accepted" response `0xE5` |
 
-i2cspi/tmp125/
-  spiio.h         #define SPIBASE 0xFF0030 / MISO=+0 / MOSI=+0 / SCLK=+1 / SELN=+2
-  libspi.c        spiseln helper
-  spixchg.s       8-bit unrolled SPI exchange in assembly
-  tmp125.c        prints temperature from a TMP125 SPI sensor
-  tmp125.lgo      assembled binary — phase-2 integration test
-```
+Skip-on-this-pass:
+- Dummy-clock count before CMD0 (real cards need ≥74 clocks; we
+  accept immediately). Document this.
+- CRC validation on commands (accept any CRC byte from master).
+- CRC computation on responses (emit two `0xFF` bytes as the
+  trailing CRC; matches real-world software-only drivers that
+  don't check).
+- Multi-block read/write (`CMD18`, `CMD25`) — defer to a future brief.
 
-These are **canonical examples** for the platform: any new I2C/SPI demo
-follows the same structure (`<chip>io.h` defines the MMIO base,
-`lib<bus>.c` provides the protocol, `<demo>.c` does the chip-specific
-work). They double as the "how to write a new bus app" tutorial.
-
-### 3.2 What we'll add
-
-- A short author's-guide markdown (probably in `docs/` of the emulator
-  repo, or alongside the demos) that walks through writing a new I2C
-  demo using `tmp101.c` as the template, and points at the matching
-  device model so the user can run it in the emulator.
-- A second I2C demo against a different device class (an EEPROM read or
-  an RTC time read) so the suite shows that more than one device shape
-  is supported. This forces the device API to be general.
-
-### 3.3 Source layout and build
-
-Demo C source lives in the tracked tree at `examples/i2c/<chip>/`
-(and `examples/spi/<chip>/` for phase 2), parallel to `src/examples/`.
-Each demo directory mirrors the original `i2cspi/` layout: chip-specific
-`.c`, the bus library (`libi2c.c`), the chip's `.h`, and a Makefile.
-
-**Toolchain.** Demos are cross-compiled with `tc24r` (the Rust-based
-COR24 C compiler at `sw-vibe-coding/tc24r`, installed in
-`work/bin/tc24r` per the devgroup workflow). Pipeline:
-
-```
-*.c --tc24r--> *.s --cor24-run --assemble--> *.lgo (+ *.lst)
-```
-
-The old `cc24`/`ld24`/`longlgo` chain that the original `i2cspi/`
-Makefile used is not adopted (its binaries aren't present anyway).
-
-**Known `tc24r` constraints** (verified against the imported source —
-the import step in §8 step 0 must address each):
-
-1. No standard library headers are shipped — `#include <stdio.h>` is
-   not resolvable. Replace `printf` with direct writes to the UART
-   MMIO (`IO_UARTSTAT`/`IO_UARTDATA`); a tiny `printf`-shaped helper
-   for `"%.2f\n"` lives next to the demo. `tc24r -I <dir>` honors
-   custom include paths if a shared mini-libc emerges.
-2. K&R-style parameter declarations are rejected (`setup101(a) char
-   a; { ... }`). Convert to ANSI prototypes (`setup101(char a) { ... }`).
-3. `register` storage class is rejected. Drop the keyword.
-4. Empty loop bodies `while (t--);` are rejected (the bare `;` is not
-   accepted as a statement). Use `while (t--) {}`.
-
-There is no separate linker. Multi-`.c` demos build by concatenating
-the per-file `.s` outputs into a single `.s` before `cor24-run --assemble`,
-or by `#include`-ing helper `.c` into the top-level translation unit.
-The Makefile encodes whichever choice the demo uses.
-
-**Reproducibility without the toolchain.** A known-good `.lgo` is
-committed alongside each demo as the test fixture, so contributors and
-CI can run the integration tests without `tc24r` installed.
-`scripts/rebuild-i2c-fixtures.sh` invokes the per-demo Makefile and
-diffs the output against the committed `.lgo`. The diff runs in a
-`tc24r`-aware CI job (skipped when `tc24r` is not on PATH). Fixture
-rebuilds are an explicit, reviewable commit — never an implicit side
-effect of `cargo build`.
-
-**First demo.** `examples/i2c/tmp101/` is imported from the existing
-user-supplied `i2cspi/tmp101/` content as the very first saga step,
-compiled by `tc24r`, fixture committed. Every later step's integration
-test loads that fixture.
-
-### 3.4 What we will *not* do at the application layer
-
-No changes to `libi2c.c` / `libspi.c` / `spixchg.s` beyond what `tc24r`
-acceptance forces — the whole point of MMIO-accurate emulation is that
-the same source runs on FPGA and emulator. If a demo needs different
-code on emulator vs. FPGA, the abstraction has leaked and we should fix
-the emulator instead.
-
-## 4. Layer 2 — Bus MMIO emulation
-
-### 4.1 How guest code drives the bus
-
-Both interfaces are **bit-banged GPIO**, not register-driven peripherals.
-The CPU pokes individual line states and clocks the bus itself. This is
-materially different from the existing UART, where the CPU writes one
-byte to `IO_UARTDATA` and the emulator reacts to that byte.
-
-I2C — the master writes 1 to release a line and 0 to drive it low; reads
-return the actual line state (open-drain wired-AND). `clkhiw()` writes
-SCL=1 then *polls* SCL until it reads back 1 — the standard
-clock-stretching check, so a slave must be able to hold SCL low.
-
-For I2C reads, the master writes SDA=1 (releases the line) and samples
-SDA during the SCL-high window — meaning the slave drives SDA by causing
-those reads to return 0 for the bits it wants to send.
-
-SPI is simpler: write MOSI, toggle SCLK, sample MISO. Mode 0, MSB-first,
-single SS line.
-
-### 4.2 The emulator can't just "respond when the CPU writes a byte"
-
-It sees individual line transitions and must **reconstruct logical bus
-events** (START, address+RW, byte-in, byte-out, ACK, STOP for I2C;
-bit-shift on SCLK edge for SPI) from the physical transitions, then
-route those events to a virtual device.
-
-### 4.3 Where it slots in
-
-The Rust emulator's I/O dispatch already has the right shape — a flat
-`match addr { ... }` in `CpuState::read_io` / `write_io`
-(`src/cpu/state.rs`). Extending it follows the existing UART pattern:
-
-1. Add fields to `IoState` for the new peripheral's persistent state.
-2. Add MMIO address constants (`IO_I2C_SCL`, `IO_I2C_SDA`, etc.).
-3. Add match arms in `read_io` / `write_io`.
-4. If the peripheral needs per-instruction "time" advancement (like the
-   UART's TX-busy countdown), add a `*_tick()` method called alongside
-   `uart_tick()` in the executor loop.
-5. Surface configuration and observability through `EmulatorCore`
-   (`src/emulator.rs`) so `cli/src/run.rs` and the Web UI's `app.rs`
-   can use it.
-
-Nothing in the CPU core, decode ROM, or instruction executor needs to
-change — this is purely an I/O peripheral addition.
-
-### 4.4 I2C bus model
-
-Track four bits, two per line:
-
-| field             | meaning                                    |
-|-------------------|--------------------------------------------|
-| `master_scl`      | What the CPU last wrote to `IO_I2C_SCL`    |
-| `master_sda`      | What the CPU last wrote to `IO_I2C_SDA`    |
-| `slave_scl_pull`  | True if any attached device is stretching  |
-| `slave_sda_pull`  | True if any attached device is driving low |
-
-Effective line states (open-drain wired-AND):
-
-```
-scl_line = master_scl  & !slave_scl_pull
-sda_line = master_sda  & !slave_sda_pull
-```
-
-Reads from `IO_I2C_SCL` / `IO_I2C_SDA` return the effective line state in
-bit 0. Writes update the master driver state and then advance the state
-machine on every transition. This handles `clkhiw()` correctly: with no
-device stretching, the master sees SCL=1 immediately after writing 1.
-
-### 4.5 I2C state machine
-
-Driven by `(scl_line, sda_line)` transitions, not by writes:
-
-```
-Idle               // both lines high, no transaction
-Started            // saw START; waiting for address bits
-RxByte(bits, n)    // shifting in a byte from master (addr or write data)
-AckMasterToSlave   // device decides to ACK/NAK after addressed/written
-TxByte(bits, n)    // shifting out a byte to master (read data)
-AckSlaveToMaster   // master ACKs (or NAKs to end read)
-Stopped            // saw STOP — back to idle next cycle
-```
-
-Edge detection rules (standard I2C):
-
-- **START**: SDA falls while SCL is high → `Idle | * → Started`
-- **STOP**:  SDA rises while SCL is high → `* → Stopped → Idle`
-- **Bit clocked in**: SCL rises → if in `RxByte(_,n)`, shift in `sda_line`
-- **Bit clocked out**: master drives SCL low after sampling → advance bit
-- **Repeated START**: handled by the START rule from any non-Idle state
-
-After 8 bits in `RxByte`, transition to `AckMasterToSlave`. The first
-byte of every transaction is `(addr<<1)|rw`; when that completes, look
-up the device with the matching 7-bit address and route subsequent
-events to it.
-
-### 4.6 SPI bus model (phase 2)
-
-Skeletally the same but simpler — no addressing, no START/STOP, no
-open-drain. Just a shift register clocked by SCLK while SELN is low.
-
-```
-master_mosi, master_sclk, master_seln_n   // CPU writes
-slave_miso                                 // selected device drives this
-```
-
-`IO_SPI_DATA` (0xFF0030) reads `slave_miso`, writes `master_mosi`.
-`IO_SPI_SCLK` (0xFF0031) — only writes matter; read returns last value.
-`IO_SPI_SELN` (0xFF0032) — bit 0 selects device 0 (active low).
-
-State machine: on SCLK rising edge with SELN=0, shift `master_mosi`
-into the master input register; ask the selected device for its next
-MISO bit. Mode 0 (CPOL=0, CPHA=0): MOSI is set on falling edge, sampled
-on rising.
-
-### 4.7 IoState additions
+### State
 
 ```rust
-pub struct I2cBusState {
-    pub master_scl: bool,
-    pub master_sda: bool,
-    pub phase: I2cPhase,
-    pub shift: u8,
-    pub bit_count: u8,
-    pub current_target: Option<u8>,
-    pub current_dir: I2cDir,
-    pub log: I2cLog,
-    // Devices live here, but see "Open question: serialization" below.
-    pub devices: Vec<Box<dyn I2cDevice>>,
+pub struct SdCardDevice {
+    cs: u8,                       // chip-select pin
+    image_path: Option<PathBuf>,  // backing file; None = in-memory ephemeral
+    image: Vec<u8>,               // loaded contents (or initial-zeros if no file)
+    state: SdState,               // Idle | Ready | Reading{...} | Writing{...}
+    expecting_bytes: usize,       // remaining argument or data bytes for current command
+    rx_buf: [u8; 6],              // command receive buffer (6 bytes: opcode + 4 arg + CRC)
+    rx_n: usize,
+    tx_buf: VecDeque<u8>,         // bytes the slave will send out on next clocks
+    acmd_pending: bool,           // CMD55 was just received → next command is ACMD
 }
 ```
 
-`I2cBusState` is **not** `Serialize` — trait objects don't fit the
-existing serde derive on `IoState`. Mark the bus state `#[serde(skip)]`
-and re-attach devices after load. (Web UI's `WasmCpu` clones state but
-doesn't currently persist across runs, so this is fine.)
+Block-level mapping: when CMD17 with argument N arrives, seek to
+byte offset `N * 512` in `image`, queue up:
+1. Several `0xFF` bytes (simulate hardware busy — 8 is fine).
+2. The `0xFE` data token.
+3. 512 bytes from the image.
+4. Two `0xFF` (dummy CRC).
 
-### 4.8 Per-instruction tick
+CMD24 writes the same way in reverse: master will eventually send
+`0xFE` followed by 512 bytes. Buffer them, write back to the host
+file on `0xFE + 512` complete, then emit the data-accepted byte.
 
-I2C strictly doesn't need a tick (everything advances on writes), but
-some devices simulate work that takes time (TMP101 conversion time,
-EEPROM write time). Add a tick hook on the device trait and call it
-from the executor loop alongside `uart_tick()`.
-
-For the first cut, ticks are optional: a device that doesn't override
-`on_tick` is just instant-response.
-
-## 5. Layer 3 — Pluggable device extension API
-
-This is the part the user will interact with most. A new device should
-be one Rust file plus one registry line, no other changes. The trait is
-the public surface.
-
-### 5.1 The I2C device trait
+### `SdCardHandleExt`
 
 ```rust
-/// Abstracts a virtual I2C slave device attached to the emulator's bus.
-/// Implementations live in src/peripherals/i2c/devices/.
-pub trait I2cDevice: Send {
-    /// 7-bit I2C address this device currently responds to. Mutable —
-    /// every device must support runtime address changes (the web UI
-    /// drives this through `I2cHandle::set_address`).
-    fn address(&self) -> u8;
-    fn set_address(&mut self, addr: u8);
-
-    /// Optional human-readable name (used in logs and CLI).
-    fn name(&self) -> &str { "i2c-device" }
-
-    /// Bus state events. Default impls let simple devices override only
-    /// what they need.
-    fn on_start(&mut self) {}
-    fn on_write_byte(&mut self, byte: u8) -> Ack { Ack::Nak }
-    fn on_read_byte(&mut self) -> u8 { 0xFF }
-    fn on_master_ack(&mut self) {}
-    fn on_master_nak(&mut self) {}
-    fn on_stop(&mut self) {}
-
-    /// Called once per CPU instruction. Use sparingly — only for devices
-    /// that model time (conversion delay, watchdog, etc.).
-    fn on_tick(&mut self) {}
-
-    /// Optional clock stretching. Return true to hold SCL low.
-    fn stretching_scl(&self) -> bool { false }
-}
-
-pub enum Ack { Ack, Nak }
-```
-
-`address` and `set_address` are **mandatory** on every device — both
-the universal `add1` test slave and chip-specific devices like
-`tmp101`. The 7-bit address space is a runtime concern (DIP switches,
-board jumpers, accidentally-conflicting bus layouts), not a
-compile-time chip property; the emulator mirrors that.
-
-When a handle calls `set_address`, the bus's address-routing table
-must be refreshed too — `EmulatorCore::attach_i2c_device` returns a
-handle whose `set_address(u8)` updates *both* the device and the
-routing table in one call. Devices never reach into the bus directly.
-
-### 5.2 The SPI device trait (phase 2)
-
-```rust
-pub trait SpiDevice: Send {
-    fn name(&self) -> &str { "spi-device" }
-    fn on_select(&mut self) {}
-    /// Simultaneous shift: receive a byte from MOSI, return the byte
-    /// that was on MISO during the same 8 clocks.
-    fn on_byte(&mut self, mosi: u8) -> u8;
-    fn on_deselect(&mut self) {}
-    fn on_tick(&mut self) {}
+pub trait SdCardHandleExt {
+    /// Bytes-eye view of the backing image (web panel uses this).
+    fn image(&self) -> Vec<u8>;
+    /// Image size in bytes (0 if no file mounted).
+    fn size(&self) -> usize;
+    /// Most-recently-accessed sector (for the web panel's "currently reading X" indicator).
+    fn last_accessed_sector(&self) -> Option<u32>;
+    /// Replace the entire image (web file-upload calls this).
+    fn replace_image(&mut self, bytes: Vec<u8>);
 }
 ```
 
-### 5.3 Device registry & construction
+### Registry
 
-A small string-keyed registry that maps device names to constructors
-parameterized by config:
-
-```rust
-pub fn build_i2c_device(spec: &str) -> Result<Box<dyn I2cDevice>, String>
-// e.g. "tmp101@0x4A"
-//      "tmp101@0x4A?temp=23.5"
-//      "ds3231@0x68?epoch=2026-05-03T12:00:00Z"
-//      "logger@0x50"
+```
+--spi-device sdcard@cs=<n>[?file=<path>]
 ```
 
-Adding a chip:
+- `file`: optional. If present, `mmap`/`read` the file as the initial
+  image; subsequent writes propagate back. If absent, in-memory
+  scratch (1 MiB blank zeros — enough to demo reads of sector 0 even
+  without a file).
+- Default CS: 2 (TMP125 already occupies whatever the existing
+  pattern uses; pick the next available — confirm in your existing
+  `spi_bus` allocation).
 
-1. New file `src/peripherals/i2c/devices/<chip>.rs` with a struct
-   implementing `I2cDevice`.
-2. One line in `src/peripherals/i2c/registry.rs` mapping `"<chip>"` to
-   a constructor closure.
-3. Tests for the device in the same file.
+Help text:
+```
+sdcard@cs=<n>[?file=<path>]               SPI SD card (SD-mode)
+```
 
-That's the entire integration cost. Bus core, CPU, executor, CLI, UI
-all unchanged.
+### Tests
 
-### 5.4 First device set
+In `src/peripherals/spi/devices/sdcard.rs::tests`:
 
-Phase 1, in priority order:
+- `cmd0_returns_idle` — empty device responds `0x01` to CMD0.
+- `cmd8_echo` — CMD8 returns the voltage-echo R7.
+- `acmd41_transitions_to_ready` — after CMD55 + ACMD41, R1 returns `0x00`.
+- `cmd17_reads_known_sector` — preload image with known bytes;
+  send CMD17 sector=0; consume responses; assert the 512-byte data
+  payload matches.
+- `cmd24_writes_persists` — send CMD24 sector=5; feed 512 bytes;
+  read back via CMD17; assert match.
+- `cmd24_writes_to_file` — with `file=<tmpfile>`, write a sector,
+  assert the host file on disk now contains those bytes at the
+  right offset.
 
-| Device       | Why                                                   |
-|--------------|-------------------------------------------------------|
-| `add1`       | Universal built-in test slave: settable address; on read returns `(last_written + 1) & 0xFF`. Smallest device that exercises full read+write+ACK paths through the bus state machine. |
-| `tmp101`     | Validates the imported tmp101 demo binary end-to-end  |
-| `logger`     | Bit-bucket sniffer; records every event for tests/UI  |
-| `eeprom`     | Read/write semantics — exercises addressed register access |
-| `ds3231`     | RTC — multi-byte register file, common in projects    |
+Plus an integration test in `tests/spi.rs` exercising
+`--spi-device sdcard@cs=2?file=<tmpfile>` end-to-end.
 
-`add1` is intentionally the smallest possible device that still
-validates the bus core. Its semantics:
+## Step 2: W25q32Device (NOR Flash)
 
-- Configurable 7-bit address (`add1@0x50`, `add1@0x42`, etc.).
-- Configurable wrap limit (default `0x100`, i.e. 8-bit wrap; `?wrap=10`
-  for decimal wrap, etc.).
-- Stores a single `last: u8` byte.
-- On `on_write_byte(b)`: stores `last = b`, returns `Ack::Ack`.
-- On `on_read_byte()`: returns `last = (last + 1) % wrap`, then increments
-  for the next read.
-- Handle: `Add1Handle::peek() -> u8`, `Add1Handle::poke(u8)`.
+### What
 
-`add1` is the device the bus state-machine smoke tests use to confirm
-ACKed transactions and the read path work end-to-end before any
-chip-specific device exists. tmp101 follows once `add1` proves the
-trait + handle plumbing.
+Add `src/peripherals/spi/devices/w25q32.rs`. Implement the Winbond
+W25Q32 instruction subset needed by a flash-management demo. The
+chip is **4 MiB exactly** (4,194,304 bytes / 0x40_0000).
 
-Phase 2 / SPI:
+| Opcode | Name | Args | Behavior |
+|---|---|---|---|
+| `0x9F` | JEDEC ID | none | Return `0xEF 0x40 0x16` (Winbond, type, capacity — W25Q32 signature) |
+| `0x05` | Read Status Register 1 | none | Return current status (bit 0 = WIP busy, bit 1 = WEL enable) |
+| `0x06` | Write Enable | none | Set WEL bit = 1 |
+| `0x04` | Write Disable | none | Clear WEL bit |
+| `0x03` | Read Data | 3-byte addr | Stream bytes from `addr` forward (auto-incrementing) until master deselects CS |
+| `0x02` | Page Program | 3-byte addr + ≤256 data | Write into the current 256-byte page; requires WEL=1; sets WIP busy for ~3 ms simulated; chip-erase-1-bits rule applies (only 1→0 transitions allowed unless erased) |
+| `0x20` | Sector Erase | 3-byte addr | Set 4 KB (0x1000) aligned sector to `0xFF`; requires WEL=1; WIP busy ~40 ms |
+| `0xD8` | Block Erase | 3-byte addr | Set 64 KB (0x10000) aligned block to `0xFF`; requires WEL=1; WIP busy ~200 ms |
+| `0xC7` or `0x60` | Chip Erase | none | Whole image to `0xFF`; requires WEL=1; WIP busy ~2 s (skip the WIP delay if you want; document) |
 
-| Device       | Why                                                   |
-|--------------|-------------------------------------------------------|
-| `tmp125`     | Validates the existing SPI demo                       |
-| `mcp23s17`   | Generic SPI GPIO expander — useful in many demos      |
+Reject (return WIP-busy or no-op):
+- Writes without `0x06` first — clear WEL after each program, so each
+  write needs its own enable.
+- Writes to a page that still has any 0→1 transition that isn't erased.
 
-Future / nice-to-have: BME280 (I2C+SPI), HD44780/SSD1306 LCD,
-rotary encoder via I2C expander. None of these block phase 1.
+For WIP/WEL timing: don't actually `thread::sleep`. Simulate by
+counting "clocks until WIP clears" — e.g., 1024 SPI byte-clocks for
+Page Program, 4096 for Sector Erase. The CLI integration test can
+poll `0x05` and observe the bit flip after enough byte-clocks.
 
-### 5.5 Documentation deliverable
-
-A `docs/extending-i2c.md` file in the emulator repo that:
-
-- Walks through writing a new device from scratch using a minimal toy
-  chip (e.g. an "echo" device).
-- Documents every method on the trait with timing/sequencing notes.
-- Links to the actual chip implementations as worked examples.
-
-Without this doc, the extension API isn't really a public API.
-
-### 5.6 Device handles for runtime mutation
-
-Devices need state that is observable and mutable from outside the bus
-core: set the TMP101's reported temperature, twiddle a switch on a
-virtual GPIO expander, inject a clock-stretch. The web UI in particular
-(separate repo, see §6) drives this through a slider/button.
-
-Attach returns a typed handle:
+### State
 
 ```rust
-impl EmulatorCore {
-    pub fn attach_i2c_device<D: I2cDevice + 'static>(
-        &mut self,
-        dev: D,
-    ) -> I2cHandle<D>;
-}
-
-pub struct I2cHandle<D> { /* Arc<Mutex<D>> or equivalent */ }
-
-impl<D: I2cDevice> I2cHandle<D> {
-    /// Mutate the device behind the handle. Bus's address-routing
-    /// table is *not* refreshed — use `set_address` for that.
-    pub fn with<R>(&self, f: impl FnOnce(&mut D) -> R) -> R;
-
-    /// Read the device's current 7-bit I2C address.
-    pub fn address(&self) -> u8;
-
-    /// Move the device to a new 7-bit address. Updates both the
-    /// device's `set_address` and the bus's address routing in one
-    /// call. Returns Err if `addr` would collide with another attached
-    /// device.
-    pub fn set_address(&self, addr: u8) -> Result<(), AddressInUse>;
+pub struct W25q32Device {
+    cs: u8,
+    image: Box<[u8; 4 * 1024 * 1024]>,
+    wel: bool,
+    wip_clocks_remaining: u32,
+    current_op: Option<W25q32Op>,
+    rx_buf: Vec<u8>,
+    tx_buf: VecDeque<u8>,
 }
 ```
 
-Each device crate also exposes its own chip-specific controls — TMP101's
-are `set_temperature(f32)` and `set_resolution(Tmp101Resolution)`; an
-EEPROM's are `peek(addr) / poke(addr, byte)`; `add1`'s are `peek() / poke(u8)`.
-But every device — universal or chip-specific — exposes
-`address()` / `set_address()` through its handle, because the bus
-address is a runtime/board-level concern (§5.1).
+Backing file: like SD card, optional `?file=<path>`. If present,
+loaded on attach and synced on program/erase. If absent, in-memory
+4 MiB scratch starting all-`0xFF` (default flash state).
 
-CLI specs include the address: `add1@0x50`, `tmp101@0x4A`, etc.
-After attach, the user (or web UI) can move the device by calling
-`handle.set_address(0x42)` — the bus's routing table tracks the move.
-
-The string-keyed registry from §5.3 (`build_i2c_device(spec)`) returns
-`Box<dyn I2cDevice>` for CLI use; the typed-handle path is the
-programmatic API used by tests and the web UI. Both coexist.
-
-## 6. EmulatorCore and CLI surface
-
-Mirror the UART API in `src/emulator.rs`:
+### `W25q32HandleExt`
 
 ```rust
-impl EmulatorCore {
-    pub fn attach_i2c_device(&mut self, dev: Box<dyn I2cDevice>);
-    pub fn detach_i2c_devices(&mut self);
-    pub fn i2c_log(&self) -> &I2cLog;
-    pub fn format_i2c_log(&self) -> String;
-
-    // Phase 2:
-    pub fn attach_spi_device(&mut self, dev: Box<dyn SpiDevice>);
-    pub fn spi_log(&self) -> &SpiLog;
+pub trait W25q32HandleExt {
+    fn image(&self) -> Box<[u8; 4 * 1024 * 1024]>;   // or &[u8] if Box<arr> is awkward
+    fn jedec_id(&self) -> [u8; 3];                   // always [0xEF, 0x40, 0x16]
+    fn wip(&self) -> bool;
+    fn wel(&self) -> bool;
+    fn last_accessed_address(&self) -> Option<u32>;
+    fn replace_image(&mut self, bytes: Vec<u8>);     // web panel "load file" path
+    fn erase_chip(&mut self);                         // panel reset button shortcut
 }
 ```
 
-CLI flags in `cli/src/run.rs`:
+### Registry
 
 ```
---i2c-device tmp101@0x4A             # attach a TMP101 at addr 0x4A
---i2c-device 'tmp101@0x4A?temp=25.0' # with config
---i2c-device logger@*                # passive logger on every address
---dump-i2c                           # print transaction log on exit
-
-# Phase 2:
---spi-device tmp125
---dump-spi
+--spi-device w25q32@cs=<n>[?file=<path>]
 ```
 
-`--i2c-device` can be repeated. The flag value goes through
-`build_i2c_device(spec)` so the parser logic lives in one place.
+Help text:
+```
+w25q32@cs=<n>[?file=<path>]               Winbond W25Q32 NOR flash (4 MiB)
+```
 
-Log entries are at the **transaction level**, not the bit level — a
-START is one entry, a complete addressed byte-write is one entry, etc.
-Bit-level traces are useful for debugging the bus core itself but not
-day-to-day; gate them behind `--dump-i2c-bits` or similar.
+### Tests
 
-### 6.1 Web UI integration surface
+In `src/peripherals/spi/devices/w25q32.rs::tests`:
 
-The pre-built WASM artifacts in `pages/` are frozen and not the live
-target (see CLAUDE.md). New live-demo work happens in a separate
-WASM/Yew repo that takes a `cargo` dependency on this crate. That
-repo's responsibilities:
+- `jedec_id_signature` — 0x9F returns `[0xEF, 0x40, 0x16]`.
+- `read_uninitialized_returns_ff` — fresh device, 0x03 from any
+  address returns 0xFF.
+- `page_program_requires_wel` — 0x02 without preceding 0x06 is
+  rejected (WEL=0).
+- `page_program_after_erase` — erase chip, write enable, program
+  256 bytes, read back, assert match.
+- `page_program_one_to_zero_rule` — write 0xAA over 0xFF — works.
+  Write 0xAA over 0x55 (without erase) — fails (or silently does
+  AND, depending on faithful behavior; document choice).
+- `sector_erase_clears_4kb` — fill image with 0x00, erase sector
+  at 0x1000, assert bytes 0x1000..0x1FFF are 0xFF and others are 0x00.
+- `block_erase_clears_64kb` — same shape, 0xD000 boundary.
+- `wip_clears_after_clocks` — write a page, poll 0x05, assert WIP=1
+  initially, WIP=0 after sufficient byte-clocks.
+- `image_persists_to_file` — `?file=<tmpfile>`, write a page, drop
+  the device, reopen, read same address, assert match.
 
-- Construct an `EmulatorCore`.
-- Call `attach_i2c_device(dev)` for whichever devices the demo
-  exposes; keep the returned `I2cHandle<D>` in app state.
-- Wire UI controls (sliders, toggles, buttons) to handle methods like
-  `Tmp101Handle::set_temperature(f32)`.
-- Render `core.format_i2c_log()` (or iterate `core.i2c_log()`) into a
-  log panel, paired with the existing UART log.
-- Provide its own `wasm-bindgen` glue. **This crate stays
-  WASM-target-agnostic** per the emulator-only-scope refactor.
+Plus an integration test in `tests/spi.rs` with the CLI flag.
 
-A tiny `examples/web-surface-smoke.rs` in this repo exercises every
-method the web UI is expected to call (attach, mutate via handle, read
-log, detach), so a breaking API change here is caught by
-`cargo test --workspace` before the downstream repo notices.
+## Acceptance
 
-## 7. Tests
+- Both devices live in `src/peripherals/spi/devices/`.
+- `sdcard.rs` + `w25q32.rs` each ~400-600 lines (sdcard is simpler
+  state-machine wise; w25q32 has more commands).
+- Registry accepts both forms; help text updated.
+- `cargo test --workspace` green including all new tests.
+- `cargo clippy --workspace -- -D warnings` green.
+- TWO commits on `pr/spi-sdcard-and-nor-flash`:
+  - `feat(spi): SdCardDevice — SD-mode card reader`
+  - `feat(spi): W25q32Device — Winbond W25Q32 NOR flash (4 MiB)`
 
-**Tests are part of every saga step, not an afterthought.** Each plan
-§8 step lands its own tests in the same commit before being marked
-complete: a state-machine step adds state-machine unit tests; a device
-step adds device unit tests; a CLI/handle step adds CLI/E2E tests.
-`cargo test --workspace` is the gate for `agentrail complete --reward 1`.
-A step that introduces no logic still adds a smoke assertion (e.g.
-"reading the new MMIO address returns 1").
+Saga: `agentrail init` a two-step saga (step 1 = sd card, step 2 =
+nor flash); each step gets its own commit recorded in `commits`.
 
-Three layers, mirroring the architecture:
+## Out of scope
 
-1. **Bus state machine unit tests** — feed sequences of `(scl, sda)`
-   writes, assert phase transitions and decoded byte values. No CPU.
-   Pure logic, fast.
+- **SDHC vs SDSC** distinction beyond the CMD8 echo — we present
+  as SDHC always.
+- **Multi-block read/write** (CMD18, CMD25). Defer.
+- **Chip-erase WIP delay** is optional; if implementing, document
+  the chosen byte-clock duration.
+- **Dual/Quad SPI modes** on the W25Q32. Standard single-SPI only.
+- **4-byte addressing mode** on the flash. W25Q32 fits in 3 bytes;
+  no need for 0xB7 / 0xE9 / 0xC5 commands.
+- **CRC validation** on either device. Accept any CRC the master
+  sends; emit 0xFF as the trailing CRC.
 
-2. **Device unit tests** — call trait methods directly, assert
-   responses. (TMP101: pointer-register behavior. EEPROM: address
-   wrap. RTC: multi-byte register reads.) These also cover the typed
-   handle: `handle.with(|d| d.set_temperature(...))` then assert the
-   next read returns the new value.
+## Workflow
 
-3. **End-to-end integration tests** — load the committed
-   `examples/i2c/tmp101/tmp101.lgo` fixture, attach a `Tmp101` device
-   at `0x4A`, run for N instructions, assert the UART output contains
-   the expected `"%.2f\n"` line for the configured temperature. This is
-   the single most important test — if it passes, the whole stack works
-   (libi2c bit-banging, bus state machine, device model, UART output,
-   printf).
+```bash
+cd /disk1/.../work/dcemu/github/sw-embed/sw-cor24-emulator
+git fetch origin --prune
+git switch dev && git merge --ff-only origin/dev
+agentrail init --name spi-sdcard-and-nor-flash --plan docs/briefs/8-dcemu-spi-sdcard-and-nor-flash.md
+# (or use your existing saga setup pattern)
 
-The fixture `.lgo` is committed; tests do not need `tc24r` installed.
-A separate CI job (see §3.3) optionally runs
-`scripts/rebuild-i2c-fixtures.sh` and diffs against the committed fixture.
+# step 1
+git switch -c feat/spi-sdcard-and-nor-flash
+# implement sd card, write tests
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+git commit -am "feat(spi): SdCardDevice — SD-mode card reader"
 
-## 8. Implementation order (I2C first)
+# step 2 (same branch)
+# implement w25q32, write tests
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+git commit -am "feat(spi): W25q32Device — Winbond W25Q32 NOR flash (4 MiB)"
 
-Each step is a single small commit; the suite stays green at every step;
-each step's commit includes the tests for the work it introduces (see
-§7). Anything that can't be tested at this step is called out in the
-step's "Done when" so the next step can pick it up.
+git branch -m feat/spi-sdcard-and-nor-flash pr/spi-sdcard-and-nor-flash
+```
 
-0. **Import sources and rebuild script** — copy the existing
-   `i2cspi/tmp101/` tree to `examples/i2c/tmp101/`. Make K&R adjustments
-   needed to satisfy `tc24r`. Rewrite the Makefile to drive `tc24r`.
-   Build `tmp101.lgo` once and commit it as the test fixture. Add
-   `scripts/rebuild-i2c-fixtures.sh` (skips with a clear message when
-   `tc24r` is not on PATH). Add an integration-test scaffold
-   (`tests/i2c.rs`) that loads the fixture; the load-only assertion
-   passes today and gives every later step a concrete fixture to
-   exercise. Tests do not require `tc24r`.
-
-1. **Constants and stub I/O** — add `IO_I2C_SCL`, `IO_I2C_SDA` to
-   `state.rs`; reads return 1 (idle bus), writes are no-ops. Unit test
-   asserts the new MMIO addresses read 1. Smoke-test against
-   `examples/i2c/tmp101/tmp101.lgo`: it does not crash; it will spin
-   in `clkhiw()` since nothing ACKs (expected).
-
-2. **Master line state** — store `master_scl` / `master_sda` in
-   `IoState`, return them on read. Unit test asserts write-then-read
-   round-trips on both lines. `clkhiw()` returns immediately in the
-   smoke-test run; the driver still runs to STOP with no device
-   responding.
-
-3. **Bus state machine** — implement edge detection and the phase
-   enum. State-machine unit tests feed `(scl, sda)` write sequences
-   and assert phase transitions plus decoded byte values. No devices
-   attached yet.
-
-4. **Device trait + Add1 device + handle** — define `I2cDevice` plus
-   the typed-handle API (§5.6). The first concrete device is `add1`
-   (§5.4): settable 7-bit address, stores last-written byte, returns
-   `(last + 1) % wrap` on read. It's the smallest device that exercises
-   the full write/ACK/read path through the state machine. Unit tests
-   assert: write-then-read round-trips, multi-byte read sequences
-   increment correctly, `Add1Handle::poke()` mutates state observably
-   to subsequent bus reads. A logger sniffer drops out of this step's
-   smoke test entirely — `add1` is bidirectional from the start.
-
-5. **TMP101 device + handle** — model enough of the chip (config
-   register, temperature register, pointer register) for the imported
-   demo. `Tmp101Handle::set_temperature` mutates the reported value.
-   End-to-end integration test runs `examples/i2c/tmp101/tmp101.lgo`
-   and asserts the printed temperature matches the value set on the
-   handle.
-
-6. **EmulatorCore + CLI plumbing** — `attach_i2c_device` returning
-   `I2cHandle<D>`, `--i2c-device`, `--dump-i2c`. CLI test asserts the
-   transaction log shape for a tmp101 run. `examples/web-surface-smoke.rs`
-   (§6.1) lands here and is exercised by `cargo test --workspace`.
-
-7. **Registry + third device** — implement `build_i2c_device(spec)`
-   and add one more chip-specific device (EEPROM or DS3231) with its
-   own handle and tests. With `add1`, `tmp101`, and one chip-shape
-   device all working through the same trait, the extension API is
-   ready to declare "public".
-
-8. **Extension docs** — `docs/extending-i2c.md` with a worked example
-   based on a minimal "echo" device (or `add1` itself, since it's
-   already a clean reference implementation). Without this, the API
-   isn't really an API.
-
-9. **Web UI surface** (separable; downstream repo) — the WASM/Yew demo
-   in its own repo wires up a panel showing the I2C log, an
-   attach/detach control, and a TMP101 temperature slider against
-   `Tmp101Handle`. This crate's deliverable is just keeping
-   `examples/web-surface-smoke.rs` green.
-
-After this lands, phase 2 (SPI) follows the same shape, replacing the
-state machine with the simpler shift-register model and re-using the
-device-attachment plumbing nearly verbatim.
-
-## 9. Open questions
-
-- **Multi-slave SPI**: real boards usually have separate SS lines per
-  device. The COR24-TB has one. Stay single-slave for now and add a
-  bitmask `seln` register if/when the hardware grows more lines.
-- **Clock stretching**: do any planned devices actually need it? If
-  not, `slave_scl_pull` stays always-false and that code path is
-  dormant until a device that needs it shows up.
-- **Where device modules live**: a sibling `peripherals/` module under
-  `src/` keeps them out of `cpu/` (since they're not CPU concerns) and
-  parallels `assembler` / `loader` at the same level.
-- **Serialization**: confirm the Web UI doesn't need to round-trip
-  device state through serde. If it does, devices need an enum-based
-  dispatch instead of `dyn I2cDevice`, which closes off the third-party
-  extension story unless we expose a registration callback.
-- **Address conflicts**: should `attach_i2c_device` reject a duplicate
-  address, or allow last-writer-wins? Reject seems safer; bus
-  collisions on real hardware are pathological.
-- **Wildcard logger**: is `logger@*` (sees all addresses) useful, or
-  confusing? Probably useful for debugging but should be opt-in and
-  obvious in the log.
+Optional `pr/...-saga-complete` per the established pattern.
+**Keep saga-complete a strict superset of feat at signal time.**
