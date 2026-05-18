@@ -27,12 +27,12 @@ pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String>
         Some((h, t)) => (h, Some(t)),
         None => (spec, None),
     };
+    // `@cs=<n>` is forward-compat universal — accepted for every device
+    // and silently honored when the underlying device tracks a CS pin
+    // (sdcard, w25q32). Devices without their own CS field (echo,
+    // tmp125) accept the syntax and ignore the value; when multi-slave
+    // SPI lands in plan §9 they pick it up uniformly.
     let (name, cs_override) = split_cs(head, spec)?;
-    if cs_override.is_some() && !matches!(name, "sdcard" | "w25q32") {
-        return Err(format!(
-            "SPI device '{name}' doesn't support '@cs=': {spec}"
-        ));
-    }
     match name {
         "echo" => {
             let mut seed: u8 = 0;
@@ -258,9 +258,20 @@ mod tests {
     }
 
     #[test]
-    fn echo_rejects_at_cs() {
-        let err = expect_err("echo@cs=1");
-        assert!(err.contains("doesn't support '@cs="), "got: {err}");
+    fn echo_accepts_at_cs_for_forward_compat() {
+        // The @cs=<n> syntax is universal across SPI devices for
+        // forward-compat with plan §9 multi-slave routing. Devices
+        // that don't yet model a CS field accept it and ignore.
+        let arc = build_spi_device("echo@cs=1").unwrap();
+        let g = arc.lock().unwrap();
+        assert_eq!(g.name(), "echo");
+    }
+
+    #[test]
+    fn tmp125_accepts_at_cs_for_forward_compat() {
+        let arc = build_spi_device("tmp125@cs=1?temp=25.0").unwrap();
+        let g = arc.lock().unwrap();
+        assert_eq!(g.name(), "tmp125");
     }
 
     #[test]

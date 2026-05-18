@@ -76,6 +76,11 @@ fn print_short_help() {
     println!("                                 [?year=<n>][?dow=<n>]");
     println!("                                 [?preset=system]                Dallas/Maxim RTC");
     println!("                           ssd1306@<addr>[?width=<n>][?height=<n>]  SSD1306 OLED display");
+    println!("  --spi-device <spec>    Attach an SPI device (repeatable). Specs:");
+    println!("                           echo@cs=<n>[?seed=<n>]                  test echo device (CS-selected loopback)");
+    println!("                           tmp125@cs=<n>[?temp=<f>]                TI temp sensor (SPI)");
+    println!("                           sdcard@cs=<n>[?file=<path>]             SPI-mode SD card (host-file-backed)");
+    println!("                           w25q32@cs=<n>[?file=<path>]             Winbond W25Q32 NOR flash (4 MiB)");
     println!("  --trace <N>            Dump last N instructions on halt/timeout (default: 50)");
     println!("  --step                 Print each instruction as it executes");
     println!("  --terminal             Bridge stdin/stdout to UART (interactive mode)");
@@ -105,6 +110,7 @@ fn print_short_help() {
     println!(
         "  cor24-emu --lgo examples/i2c/tmp101/tmp101.lgo --i2c-device tmp101@0x4A?temp=25.0 \\\n                 -n 200000 --quiet --dump-i2c"
     );
+    println!("  cor24-emu --lgo /tmp/flash.lgo --spi-device w25q32@cs=3?file=/tmp/w25q32.bin");
 }
 
 fn print_long_help() {
@@ -426,6 +432,10 @@ struct CliArgs {
     watch_ranges: Vec<(u32, u32)>,
     /// I2C device specs to attach before run (e.g. `tmp101@0x4A?temp=25.0`).
     i2c_devices: Vec<String>,
+    /// SPI device specs to attach before run (e.g. `w25q32@cs=3?file=...`).
+    /// SPI is single-slave today; multiple specs replace each previous
+    /// attachment. Multi-slave routing is plan §9 future work.
+    spi_devices: Vec<String>,
     /// Path to a `.lgo` fixture to load (instead of assembling source).
     lgo_file: Option<String>,
 }
@@ -469,6 +479,7 @@ fn parse_args() -> CliArgs {
         canaries: Vec::new(),
         watch_ranges: Vec::new(),
         i2c_devices: Vec::new(),
+        spi_devices: Vec::new(),
         lgo_file: None,
     };
 
@@ -513,6 +524,17 @@ fn parse_args() -> CliArgs {
                     i += 1;
                 } else {
                     eprintln!("Error: --i2c-device requires a spec (e.g. tmp101@0x4A?temp=25.0)");
+                    std::process::exit(1);
+                }
+            }
+            "--spi-device" => {
+                if i + 1 < args.len() {
+                    cli.spi_devices.push(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!(
+                        "Error: --spi-device requires a spec (e.g. w25q32@cs=3?file=/tmp/w25q32.bin)"
+                    );
                     std::process::exit(1);
                 }
             }
@@ -820,6 +842,21 @@ fn attach_i2c_devices(emu: &mut EmulatorCore, specs: &[String]) {
             eprintln!("Error: --i2c-device '{spec}': {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Attach every device named in `--spi-device` specs. SPI is
+/// single-slave today (plan §9 future work: multi-slave SELN
+/// bitmask), so passing multiple specs silently replaces previous
+/// attachments — the last one wins.
+fn attach_spi_devices(emu: &mut EmulatorCore, specs: &[String]) {
+    use cor24_emulator::peripherals::spi::build_spi_device;
+    for spec in specs {
+        let dev = build_spi_device(spec).unwrap_or_else(|e| {
+            eprintln!("Error: --spi-device '{spec}': {e}");
+            std::process::exit(1);
+        });
+        emu.attach_spi_device_shared(dev);
     }
 }
 
@@ -1482,6 +1519,7 @@ fn main() {
             load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches, cli.quiet);
 
             attach_i2c_devices(&mut emu, &cli.i2c_devices);
+            attach_spi_devices(&mut emu, &cli.spi_devices);
 
             let guard = GuardState::install(&cli, &mut emu);
             let instructions = run_with_timing(
@@ -1719,6 +1757,34 @@ mod tests {
         ];
         attach_i2c_devices(&mut emu, &specs);
         assert_eq!(emu.i2c().addresses.len(), 2);
+    }
+
+    #[test]
+    fn test_attach_spi_devices_via_cli_helper() {
+        // SPI is single-slave today, so the final spec wins. The
+        // test asserts both that the helper accepts the brief 9
+        // spec syntax (`@cs=<n>?file=...` and friends) and that the
+        // device actually lands in the bus slot — silent swallowing
+        // is the exact bug brief 9 was diagnosing.
+        let mut emu = EmulatorCore::new();
+        attach_spi_devices(&mut emu, &["w25q32@cs=3".to_string()]);
+        // The bus's SPI slot is now populated. Drive a JEDEC ID
+        // exchange to confirm the W25Q32 is actually attached.
+        let slot = emu
+            .spi()
+            .device
+            .as_ref()
+            .expect("--spi-device w25q32 must populate the bus slot")
+            .clone();
+        let mut g = slot.lock().unwrap();
+        // on_select returns the byte the slave would drive during
+        // exchange 0 — idle 0xFF here. The MOSI 0x9F is clocked
+        // during exchange 0; on_byte(0x9F) returns the byte for
+        // exchange 1 (= first JEDEC byte). One-byte echo delay.
+        let _ = g.on_select();
+        assert_eq!(g.on_byte(0x9F), 0xEF);
+        assert_eq!(g.on_byte(0xFF), 0x40);
+        assert_eq!(g.on_byte(0xFF), 0x16);
     }
 
     #[test]
