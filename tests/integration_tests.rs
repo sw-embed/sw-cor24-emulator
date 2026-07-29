@@ -85,17 +85,23 @@ fn load_and_run(lgo_path: &str, entry: u32, max_cycles: u64) -> CpuState {
 
 #[test]
 fn test_led_on_lgo() {
-    // The reference as24 .lgo writes 1 to LED register.
-    // On hardware this is LED OFF (active-low: 1=OFF).
-    // We preserve the .lgo as-is — it's from the reference toolchain.
+    // led_on.s writes 0 to the LED register: active-low, so 0 = ON,
+    // which is what a program called "led on" should do.
+    //
+    // This previously asserted 0x01 (LED OFF) on the grounds that the
+    // committed .lgo came from the reference as24 toolchain and had to
+    // be preserved verbatim. That was wrong: running the current
+    // led_on.s through as24 itself also yields 0x00, so the 0x01 bytes
+    // are not reproducible from this source by any assembler. They were
+    // simply stale — the .s was corrected and the .lgo never rebuilt.
     let cpu = load_and_run(
         concat!(env!("CARGO_MANIFEST_DIR"), "/tests/programs/led_on.lgo"),
         0,
         100,
     );
     assert_eq!(
-        cpu.io.leds, 0x01,
-        "LED register should be 0x01 (LED OFF, active-low)"
+        cpu.io.leds, 0x00,
+        "LED register should be 0x00 (LED ON, active-low)"
     );
 }
 

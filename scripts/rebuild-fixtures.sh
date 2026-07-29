@@ -13,24 +13,30 @@
 # families rebuild in place and `git diff --exit-code` against the
 # committed .lgo, leaving any drift in the working tree for review.
 #
-# IMPORTANT — tests/programs/ is an allowlist, not a glob.
+# Every committed .lgo must be reproducible by running its generator.
+# Nothing here is hand-edited: a fixture that can only be produced by
+# hand is a fixture that silently rots, and the next `make` overwrites
+# the hand-work anyway.
 #
-# Not every .lgo in tests/programs/ is a build product of the .s beside
-# it. Several came from MakerLisp's reference as24 assembler and are
-# preserved byte-for-byte on purpose; the .s files next to them are
-# transcriptions, not the source of record. tests/integration_tests.rs
-# pins that intent for led_on ("We preserve the .lgo as-is — it's from
-# the reference toolchain"), whose fixture writes 0x01 where led_on.s
-# writes 0x00. Rebuilding those would silently replace reference
-# artifacts with cor24-asm output and break their tests.
+# An earlier version of this script kept led_on, count_down and
+# led_blink out of REBUILD, on the theory that they were MakerLisp as24
+# artifacts to be preserved byte-for-byte. That was checked and is
+# false: building the committed led_on.s with as24 *itself* yields the
+# same 0x00 that cor24-asm does, not the committed 0x01. Those bytes
+# were not reproducible from their source by any assembler — they were
+# stale, from a .s that had been corrected without a rebuild. They are
+# now regenerated like everything else.
 #
-# So REBUILD lists only the fixtures cor24-asm owns. Everything else is
-# reported as PRESERVED and left alone. When you add a fixture that is a
-# genuine cor24-asm build product, add its basename here.
+# REBUILD is still a list rather than a *.s glob, so that adding a .s
+# with no corresponding fixture is a deliberate act. blinky_s2 stays out
+# of it because it genuinely has no .s in this repo.
 
 REBUILD=(
     hello_world
     hello_uart
+    led_on
+    count_down
+    led_blink
 )
 
 REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 1
@@ -95,14 +101,68 @@ if [[ $have_cor24asm -eq 1 ]]; then
         done
         [[ $skip -eq 1 ]] && continue
         if [[ -f "tests/programs/${base}.s" ]]; then
-            echo "PRESERVED: $lgo (reference-toolchain artifact; .s is a transcription)"
+            echo "UNCHECKED: $lgo has a .s but is not in REBUILD — add it or say why"
+            drift=1
         else
-            echo "PRESERVED: $lgo (no .s source)"
+            echo "UNCHECKED: $lgo (no .s source in this repo; cannot be regenerated)"
         fi
     done
 else
     echo "cor24-asm not on PATH — skipping tests/programs/ rebuild."
 fi
+
+# --- docs/research/ is reference material, never a build input --------
+#
+# The C sources under docs/research/asld24 (as24, ld24, longlgo) are
+# MakerLisp's reference toolchain, kept for comparison and validation
+# only. This script never builds them and never uses them to produce a
+# committed artifact — build artifacts come from our Rust toolchain
+# (cor24-asm). Run them by hand when you want to check our output
+# against the reference; that is what they are for.
+#
+# docs/research/asld24/sieve.lgo is therefore left exactly as imported.
+# cor24-asm cannot assemble sieve.s today because it uses `.comm`
+# (`.comm _flags,8191`, a BSS/common symbol) which our assembler does
+# not implement. Until it does, that fixture stays an imported
+# reference artifact rather than something this script regenerates.
+
+# --- every shipped .lgo must carry a G record -------------------------
+#
+# .lgo is "load and go". Without a trailing G record the makerlisp
+# monitor loads the bytes and drops back to the prompt — the go never
+# happens, so a fixture downloaded to real hardware does nothing.
+#
+# cor24-emu hides this: emulator.rs falls back to `unwrap_or(0)` when no
+# G record is present, so any program starting at 0 runs anyway and the
+# whole test suite stays green. That fallback is exactly why this went
+# unnoticed for months, and why the check has to be here rather than in
+# a #[test].
+#
+# docs/research/ is exempt: those are imported reference artifacts used
+# for comparison against our toolchain, not programs we ship to
+# hardware, and we do not regenerate them. sieve.lgo is the one that
+# lands there — it enters at 0x93, so `cor24-emu --lgo sieve.lgo` needs
+# an explicit --entry 0x93, which is exactly what its callers in
+# integration_tests.rs and emulator.rs already pass.
+#
+# This check needs no toolchain, so it runs unconditionally.
+echo "=== G-record check ==="
+missing_g=0
+while IFS= read -r lgo; do
+    [[ -f "$lgo" ]] || continue
+    case "$lgo" in
+        docs/research/*)
+            echo "EXEMPT: $lgo (imported reference artifact, not shipped)"
+            continue
+            ;;
+    esac
+    if ! grep -q '^G' "$lgo"; then
+        echo "NO G RECORD: $lgo (loads but will not run on hardware)"
+        missing_g=1
+        drift=1
+    fi
+done < <(git ls-files '*.lgo')
+[[ $missing_g -eq 0 ]] && echo "all shipped .lgo files carry a G record"
 
 if [[ $drift -ne 0 ]]; then
     echo "FIXTURES DRIFTED — review and commit if intentional."
