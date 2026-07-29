@@ -27,6 +27,11 @@
 # So REBUILD lists only the fixtures cor24-asm owns. Everything else is
 # reported as PRESERVED and left alone. When you add a fixture that is a
 # genuine cor24-asm build product, add its basename here.
+#
+# Preserved is NOT the same as untouched, though. Those fixtures carry a
+# hand-appended G record — a pure text append that leaves every L record
+# byte-identical. Preserving the reference *bytes* never required
+# withholding the *entry point*; see the G-record check below.
 
 REBUILD=(
     hello_world
@@ -103,6 +108,33 @@ if [[ $have_cor24asm -eq 1 ]]; then
 else
     echo "cor24-asm not on PATH — skipping tests/programs/ rebuild."
 fi
+
+# --- every tracked .lgo must carry a G record -------------------------
+#
+# .lgo is "load and go". Without a trailing G record the makerlisp
+# monitor loads the bytes and drops back to the prompt — the go never
+# happens, so a fixture downloaded to real hardware does nothing.
+#
+# cor24-emu hides this: emulator.rs falls back to `unwrap_or(0)` when no
+# G record is present, so any program starting at 0 runs anyway and the
+# whole test suite stays green. That fallback is exactly why this went
+# unnoticed for months, and why the check has to be here rather than in
+# a #[test]. sieve.lgo is the counter-example that proves it matters —
+# it enters at 0x93, so before it had a G record `cor24-emu --lgo
+# sieve.lgo` silently produced no output at all.
+#
+# This check needs no toolchain, so it runs unconditionally.
+echo "=== G-record check ==="
+missing_g=0
+while IFS= read -r lgo; do
+    [[ -f "$lgo" ]] || continue
+    if ! grep -q '^G' "$lgo"; then
+        echo "NO G RECORD: $lgo (loads but will not run on hardware)"
+        missing_g=1
+        drift=1
+    fi
+done < <(git ls-files '*.lgo')
+[[ $missing_g -eq 0 ]] && echo "all tracked .lgo files carry a G record"
 
 if [[ $drift -ne 0 ]]; then
     echo "FIXTURES DRIFTED — review and commit if intentional."
