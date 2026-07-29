@@ -13,29 +13,30 @@
 # families rebuild in place and `git diff --exit-code` against the
 # committed .lgo, leaving any drift in the working tree for review.
 #
-# IMPORTANT — tests/programs/ is an allowlist, not a glob.
+# Every committed .lgo must be reproducible by running its generator.
+# Nothing here is hand-edited: a fixture that can only be produced by
+# hand is a fixture that silently rots, and the next `make` overwrites
+# the hand-work anyway.
 #
-# Not every .lgo in tests/programs/ is a build product of the .s beside
-# it. Several came from MakerLisp's reference as24 assembler and are
-# preserved byte-for-byte on purpose; the .s files next to them are
-# transcriptions, not the source of record. tests/integration_tests.rs
-# pins that intent for led_on ("We preserve the .lgo as-is — it's from
-# the reference toolchain"), whose fixture writes 0x01 where led_on.s
-# writes 0x00. Rebuilding those would silently replace reference
-# artifacts with cor24-asm output and break their tests.
+# An earlier version of this script kept led_on, count_down and
+# led_blink out of REBUILD, on the theory that they were MakerLisp as24
+# artifacts to be preserved byte-for-byte. That was checked and is
+# false: building the committed led_on.s with as24 *itself* yields the
+# same 0x00 that cor24-asm does, not the committed 0x01. Those bytes
+# were not reproducible from their source by any assembler — they were
+# stale, from a .s that had been corrected without a rebuild. They are
+# now regenerated like everything else.
 #
-# So REBUILD lists only the fixtures cor24-asm owns. Everything else is
-# reported as PRESERVED and left alone. When you add a fixture that is a
-# genuine cor24-asm build product, add its basename here.
-#
-# Preserved is NOT the same as untouched, though. Those fixtures carry a
-# hand-appended G record — a pure text append that leaves every L record
-# byte-identical. Preserving the reference *bytes* never required
-# withholding the *entry point*; see the G-record check below.
+# REBUILD is still a list rather than a *.s glob, so that adding a .s
+# with no corresponding fixture is a deliberate act. blinky_s2 stays out
+# of it because it genuinely has no .s in this repo.
 
 REBUILD=(
     hello_world
     hello_uart
+    led_on
+    count_down
+    led_blink
 )
 
 REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 1
@@ -100,13 +101,34 @@ if [[ $have_cor24asm -eq 1 ]]; then
         done
         [[ $skip -eq 1 ]] && continue
         if [[ -f "tests/programs/${base}.s" ]]; then
-            echo "PRESERVED: $lgo (reference-toolchain artifact; .s is a transcription)"
+            echo "UNCHECKED: $lgo has a .s but is not in REBUILD — add it or say why"
+            drift=1
         else
-            echo "PRESERVED: $lgo (no .s source)"
+            echo "UNCHECKED: $lgo (no .s source in this repo; cannot be regenerated)"
         fi
     done
 else
     echo "cor24-asm not on PATH — skipping tests/programs/ rebuild."
+fi
+
+# --- docs/research/asld24: reference as24 toolchain -------------------
+#
+# sieve.s does not assemble under cor24-asm (it uses linker-resolved
+# symbols such as _flags), so its fixture is built by the reference
+# as24 + longlgo pair whose C sources live alongside it. Those are
+# built from source by the same Makefile, so this needs only a C
+# compiler.
+if command -v cc >/dev/null 2>&1; then
+    echo "=== docs/research/asld24/ ==="
+    if ! (cd docs/research/asld24 && make sieve.lgo >/dev/null 2>&1); then
+        echo "BUILD FAILED in docs/research/asld24"
+        drift=1
+    elif ! git diff --exit-code -- docs/research/asld24/sieve.lgo; then
+        echo "DRIFT in docs/research/asld24/sieve.lgo"
+        drift=1
+    fi
+else
+    echo "cc not on PATH — skipping docs/research/asld24 rebuild."
 fi
 
 # --- every tracked .lgo must carry a G record -------------------------

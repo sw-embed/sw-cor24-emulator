@@ -120,6 +120,12 @@ L27:
 	jmp	(r1)
 
 	.globl	_main
+; as24 emits the trailing "G<addr>" load-and-go record only when a symbol
+; literally named "start" is defined (as24.c: symfind("start")). Without
+; it the monitor loads the bytes and returns to the prompt. Alias it to
+; _main so `cor24-as < sieve.s | longlgo` yields G000093.
+	.globl	start
+start:
 _main:
 	push	fp
 	push	r2
