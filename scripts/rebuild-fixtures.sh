@@ -111,27 +111,22 @@ else
     echo "cor24-asm not on PATH — skipping tests/programs/ rebuild."
 fi
 
-# --- docs/research/asld24: reference as24 toolchain -------------------
+# --- docs/research/ is reference material, never a build input --------
 #
-# sieve.s does not assemble under cor24-asm (it uses linker-resolved
-# symbols such as _flags), so its fixture is built by the reference
-# as24 + longlgo pair whose C sources live alongside it. Those are
-# built from source by the same Makefile, so this needs only a C
-# compiler.
-if command -v cc >/dev/null 2>&1; then
-    echo "=== docs/research/asld24/ ==="
-    if ! (cd docs/research/asld24 && make sieve.lgo >/dev/null 2>&1); then
-        echo "BUILD FAILED in docs/research/asld24"
-        drift=1
-    elif ! git diff --exit-code -- docs/research/asld24/sieve.lgo; then
-        echo "DRIFT in docs/research/asld24/sieve.lgo"
-        drift=1
-    fi
-else
-    echo "cc not on PATH — skipping docs/research/asld24 rebuild."
-fi
+# The C sources under docs/research/asld24 (as24, ld24, longlgo) are
+# MakerLisp's reference toolchain, kept for comparison and validation
+# only. This script never builds them and never uses them to produce a
+# committed artifact — build artifacts come from our Rust toolchain
+# (cor24-asm). Run them by hand when you want to check our output
+# against the reference; that is what they are for.
+#
+# docs/research/asld24/sieve.lgo is therefore left exactly as imported.
+# cor24-asm cannot assemble sieve.s today because it uses `.comm`
+# (`.comm _flags,8191`, a BSS/common symbol) which our assembler does
+# not implement. Until it does, that fixture stays an imported
+# reference artifact rather than something this script regenerates.
 
-# --- every tracked .lgo must carry a G record -------------------------
+# --- every shipped .lgo must carry a G record -------------------------
 #
 # .lgo is "load and go". Without a trailing G record the makerlisp
 # monitor loads the bytes and drops back to the prompt — the go never
@@ -141,22 +136,33 @@ fi
 # G record is present, so any program starting at 0 runs anyway and the
 # whole test suite stays green. That fallback is exactly why this went
 # unnoticed for months, and why the check has to be here rather than in
-# a #[test]. sieve.lgo is the counter-example that proves it matters —
-# it enters at 0x93, so before it had a G record `cor24-emu --lgo
-# sieve.lgo` silently produced no output at all.
+# a #[test].
+#
+# docs/research/ is exempt: those are imported reference artifacts used
+# for comparison against our toolchain, not programs we ship to
+# hardware, and we do not regenerate them. sieve.lgo is the one that
+# lands there — it enters at 0x93, so `cor24-emu --lgo sieve.lgo` needs
+# an explicit --entry 0x93, which is exactly what its callers in
+# integration_tests.rs and emulator.rs already pass.
 #
 # This check needs no toolchain, so it runs unconditionally.
 echo "=== G-record check ==="
 missing_g=0
 while IFS= read -r lgo; do
     [[ -f "$lgo" ]] || continue
+    case "$lgo" in
+        docs/research/*)
+            echo "EXEMPT: $lgo (imported reference artifact, not shipped)"
+            continue
+            ;;
+    esac
     if ! grep -q '^G' "$lgo"; then
         echo "NO G RECORD: $lgo (loads but will not run on hardware)"
         missing_g=1
         drift=1
     fi
 done < <(git ls-files '*.lgo')
-[[ $missing_g -eq 0 ]] && echo "all tracked .lgo files carry a G record"
+[[ $missing_g -eq 0 ]] && echo "all shipped .lgo files carry a G record"
 
 if [[ $drift -ne 0 ]]; then
     echo "FIXTURES DRIFTED — review and commit if intentional."
