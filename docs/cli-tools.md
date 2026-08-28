@@ -84,6 +84,7 @@ cor24-emu --lgo repl.lgo --terminal --echo --speed 0
 | `--echo` | Local echo in terminal mode |
 | `--switch <on\|off>` | Set button S2 state (default: off/released) |
 | `--stack-kilobytes <3\|8>` | EBR stack size (default: 3, max: 8) |
+| `--stack-bounds <B>:<T>\|none` | Valid SP range for the overflow check; `none` disables |
 | `--guard-jumps` | Halt if PC leaves the code region |
 | `--code-end <addr>` | Upper bound for `--guard-jumps` |
 | `--canary <addr>[=val]` | Halt if memory at `addr` changes |

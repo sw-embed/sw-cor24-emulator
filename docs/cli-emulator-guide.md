@@ -201,6 +201,28 @@ cor24-dbg mytest.lgo
 | UART Data | 0xFF0100 | Read: RX data, Write: TX data |
 | UART Status | 0xFF0101 | bit0=RX ready, bit1=CTS, bit7=TX busy |
 
+## Stack bounds checking
+
+The emulator halts with `StackOverflow` or `StackUnderflow` when SP leaves a
+valid range. This is a **debugging aid, not CPU behaviour**: the COR24 ISA has
+no stack concept and the board has no trap, so any SP the program sets is
+legal on hardware. The check exists to catch runaway recursion early.
+
+The default range is the EBR window, which suits a runtime that keeps its
+stack there. A runtime that puts stacks elsewhere -- for example an operating
+system holding process stacks in SRAM and only its kernel stack in EBR -- is
+otherwise reported as overflowing on its first push. Give it a range instead:
+
+```sh
+cor24-emu --lgo os.lgo --stack-bounds 0x0F0000:0xFEEC00   # SRAM stacks + EBR kernel stack
+cor24-emu --lgo os.lgo --stack-bounds none                # disable the check entirely
+```
+
+The range must contain the initial SP (`0xFEEC00`) unless the program sets SP
+before its first push, because the check runs after every instruction. An
+explicit `--stack-bounds` overrides `--stack-kilobytes`. Widening the range
+does not blind the check: an SP outside the new range is still reported.
+
 ## Demo Scripts
 
 Runnable demo scripts are in `scripts/`. Each builds the binaries and runs

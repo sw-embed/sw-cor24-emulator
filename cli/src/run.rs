@@ -100,6 +100,7 @@ fn print_short_help() {
     println!("  --load-binary <file>@<addr>  Load raw bytes into memory at address");
     println!("  --patch <addr>=<value> Write 24-bit value to memory (repeatable)");
     println!("  --stack-kilobytes <3|8>  EBR stack size (default: 3, max: 8)");
+    println!("  --stack-bounds <B>:<T>|none  Valid SP range for the overflow check; none disables");
     println!("  --switch <on|off>      Set button S2 state (default: off/released)");
     println!("  --uart-never-ready     UART TX stays busy forever (test polling)");
     println!(
@@ -434,6 +435,7 @@ struct CliArgs {
     terminal: bool,
     echo: bool,
     stack_kb: u32,
+    stack_bounds: Option<(u32, u32)>,
     load_binaries: Vec<(String, u32)>,
     patches: Vec<(u32, u32)>,
     switch_pressed: bool,
@@ -482,6 +484,7 @@ fn parse_args() -> CliArgs {
         terminal: false,
         echo: false,
         stack_kb: 3,
+        stack_bounds: None,
         load_binaries: Vec::new(),
         patches: Vec::new(),
         switch_pressed: false,
@@ -706,6 +709,29 @@ fn parse_args() -> CliArgs {
             }
             "--echo" => {
                 cli.echo = true;
+            }
+            "--stack-bounds" => {
+                if i + 1 < args.len() {
+                    let value = &args[i + 1];
+                    if value == "none" {
+                        cli.stack_bounds = Some((0, 0));
+                    } else if let Some((base, top)) = value.split_once(':')
+                        && let (Some(base), Some(top)) =
+                            (parse_numeric_addr(base), parse_numeric_addr(top))
+                        && base < top
+                    {
+                        cli.stack_bounds = Some((base, top));
+                    } else {
+                        eprintln!(
+                            "Error: --stack-bounds expects BASE:TOP with BASE < TOP, or none"
+                        );
+                        std::process::exit(1);
+                    }
+                    i += 1;
+                } else {
+                    eprintln!("Error: --stack-bounds requires a value");
+                    std::process::exit(1);
+                }
             }
             "--stack-kilobytes" => {
                 if i + 1 < args.len() {
@@ -1509,6 +1535,13 @@ fn main() {
                 emu.set_reg(4, 0xFF0000);
                 emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
             }
+            // An explicit range wins over the EBR presets: the stack-bounds
+            // check is an emulator aid, not CPU behaviour, and a runtime that
+            // keeps its stacks outside EBR is otherwise reported as
+            // overflowing on its first push.
+            if let Some((base, top)) = cli.stack_bounds {
+                emu.set_stack_bounds(base, top);
+            }
 
             if let Some(entry_str) = &cli.entry
                 && let Some(addr) = parse_numeric_addr(entry_str)
@@ -1570,6 +1603,13 @@ fn main() {
             if cli.stack_kb == 8 {
                 emu.set_reg(4, 0xFF0000);
                 emu.set_stack_bounds(cor24_emulator::cpu::state::EBR_BASE, 0xFF0000);
+            }
+            // An explicit range wins over the EBR presets: the stack-bounds
+            // check is an emulator aid, not CPU behaviour, and a runtime that
+            // keeps its stacks outside EBR is otherwise reported as
+            // overflowing on its first push.
+            if let Some((base, top)) = cli.stack_bounds {
+                emu.set_stack_bounds(base, top);
             }
 
             load_binaries_and_patches(&mut emu, &cli.load_binaries, &cli.patches, cli.quiet);

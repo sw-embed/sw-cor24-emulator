@@ -1082,6 +1082,69 @@ mod tests {
     }
 
     #[test]
+    fn a_stack_outside_ebr_is_valid_when_the_bounds_say_so() {
+        // The stack-bounds check is an emulator debugging aid, not CPU
+        // behaviour: the COR24 ISA has no stack concept and the board has no
+        // trap. A runtime that keeps process stacks in SRAM and only its
+        // kernel stack in EBR is legitimate, and needs a range spanning both.
+        let source = "
+            la   r0,0x0FFF00
+            mov  sp,r0
+            lc   r0,7
+            push r0
+        spin:
+            bra  spin
+        ";
+        let lgo = asm_to_lgo(source);
+
+        let mut guarded = EmulatorCore::new();
+        guarded.load_lgo(&lgo, None).expect("load_lgo");
+        guarded.set_pc(0);
+        guarded.resume();
+        assert_eq!(
+            guarded.run_batch(200).reason,
+            StopReason::StackOverflow(0x0F_FF00),
+            "the EBR-only default must still reject an SRAM stack"
+        );
+
+        let mut spanning = EmulatorCore::new();
+        spanning.load_lgo(&lgo, None).expect("load_lgo");
+        spanning.set_stack_bounds(0x0F_0000, 0xFE_EC00);
+        spanning.set_pc(0);
+        spanning.resume();
+        let reason = spanning.run_batch(200).reason;
+        assert!(
+            !matches!(
+                reason,
+                StopReason::StackOverflow(_) | StopReason::StackUnderflow(_)
+            ),
+            "a range covering SRAM stacks and the EBR kernel stack must allow both, got {reason:?}"
+        );
+
+        // Widening the range must not blind the check to a genuinely wild SP.
+        let wild = asm_to_lgo(
+            "
+            la   r0,0x000010
+            mov  sp,r0
+            lc   r0,7
+            push r0
+        spin:
+            bra  spin
+        ",
+        );
+        let mut narrowed = EmulatorCore::new();
+        narrowed.load_lgo(&wild, None).expect("load_lgo");
+        narrowed.set_stack_bounds(0x0F_0000, 0xFE_EC00);
+        narrowed.set_pc(0);
+        narrowed.resume();
+        assert_eq!(
+            narrowed.run_batch(200).reason,
+            StopReason::StackOverflow(0x10),
+            "an SP pointing into code must still be reported"
+        );
+    }
+
+    #[test]
     fn test_stack_bounds_disabled() {
         // Same blind recursion, but with bounds checking disabled — should not trigger
         let source = "
