@@ -10,10 +10,10 @@
 //! Run with `cargo run --example web_surface_smoke`. Asserted by the
 //! workspace smoke test in tests/web_surface.rs.
 
+use cor24_emulator::EmulatorCore;
 use cor24_emulator::peripherals::i2c::{
     Add1Device, Tmp101Device, Tmp101HandleExt, Tmp101Resolution,
 };
-use cor24_emulator::EmulatorCore;
 
 /// Run the full surface and return a one-line status. Anything the Web
 /// UI is expected to call appears here at least once.
@@ -52,7 +52,10 @@ pub fn run_surface() -> String {
     // ─── Read the logs the way the Web UI's panels would. ────────
     let i2c_log = emu.format_i2c_log();
     let uart_log = emu.format_uart_log();
-    assert!(i2c_log.contains("START"), "I2C log missing START:\n{i2c_log}");
+    assert!(
+        i2c_log.contains("START"),
+        "I2C log missing START:\n{i2c_log}"
+    );
     assert!(
         i2c_log.contains("ADDR 0x42 WR"),
         "I2C log missing addr 0x42:\n{i2c_log}"
@@ -109,8 +112,8 @@ fn drive_one_byte_to(emu: &mut EmulatorCore, addr7: u8) {
 }
 
 #[allow(dead_code)] // Used as `cargo run --example web_surface_smoke`;
-                    // when included as a test module the binary entry
-                    // point is unused.
+// when included as a test module the binary entry
+// point is unused.
 fn main() {
     let status = run_surface();
     println!("{status}");

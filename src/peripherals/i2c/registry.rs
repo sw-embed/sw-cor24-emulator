@@ -109,8 +109,8 @@ pub fn build_i2c_device(
     let (name, addr_str) = name_addr
         .split_once('@')
         .ok_or_else(|| format!("device spec missing '@<addr>': {spec}"))?;
-    let addr = parse_addr(addr_str)
-        .ok_or_else(|| format!("invalid 7-bit address in spec '{spec}'"))?;
+    let addr =
+        parse_addr(addr_str).ok_or_else(|| format!("invalid 7-bit address in spec '{spec}'"))?;
     match name {
         "add1" => {
             let mut wrap: u16 = 0x100;
@@ -120,9 +120,7 @@ pub fn build_i2c_device(
                         .split_once('=')
                         .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
                     match k {
-                        "wrap" => {
-                            wrap = v.parse().map_err(|e| format!("bad wrap '{v}': {e}"))?
-                        }
+                        "wrap" => wrap = v.parse().map_err(|e| format!("bad wrap '{v}': {e}"))?,
                         _ => return Err(format!("unknown add1 param '{k}' in '{spec}'")),
                     }
                 }
@@ -138,8 +136,7 @@ pub fn build_i2c_device(
                         .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
                     match k {
                         "temp" => {
-                            let c: f32 =
-                                v.parse().map_err(|e| format!("bad temp '{v}': {e}"))?;
+                            let c: f32 = v.parse().map_err(|e| format!("bad temp '{v}': {e}"))?;
                             dev.set_temperature(c);
                         }
                         "config" => {
@@ -449,7 +446,11 @@ mod tests {
             "expected preset=system to seed at least year 2025, got BCD {year_bcd:#04x}"
         );
         // Spot-check: month is 1-12 BCD; date is 1-31 BCD; hour < 24.
-        assert!((0x01..=0x12).contains(&bytes[5]), "month BCD: {:#04x}", bytes[5]);
+        assert!(
+            (0x01..=0x12).contains(&bytes[5]),
+            "month BCD: {:#04x}",
+            bytes[5]
+        );
         assert!(bytes[2] <= 0x23, "hour BCD: {:#04x}", bytes[2]);
     }
 

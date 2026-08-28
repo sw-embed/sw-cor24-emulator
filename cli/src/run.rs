@@ -69,18 +69,30 @@ fn print_short_help() {
     println!("  --dump-uart            Show UART transaction log (chronological IN/OUT)");
     println!("  --dump-i2c             Show I2C transaction log (chronological START/byte/STOP)");
     println!("  --i2c-device <spec>    Attach an I2C device (repeatable). Specs:");
-    println!("                           add1@<addr>[?wrap=<n>]                universal +1 test slave");
+    println!(
+        "                           add1@<addr>[?wrap=<n>]                universal +1 test slave"
+    );
     println!("                           tmp101@<addr>[?temp=<f>][?config=<n>] TI temp sensor");
     println!("                           ds1307@<addr>[?hour=<n>][?minute=<n>]");
     println!("                                 [?second=<n>][?date=<n>][?month=<n>]");
     println!("                                 [?year=<n>][?dow=<n>]");
     println!("                                 [?preset=system]                Dallas/Maxim RTC");
-    println!("                           ssd1306@<addr>[?width=<n>][?height=<n>]  SSD1306 OLED display");
+    println!(
+        "                           ssd1306@<addr>[?width=<n>][?height=<n>]  SSD1306 OLED display"
+    );
     println!("  --spi-device <spec>    Attach an SPI device (repeatable). Specs:");
-    println!("                           echo@cs=<n>[?seed=<n>]                  test echo device (CS-selected loopback)");
-    println!("                           tmp125@cs=<n>[?temp=<f>]                TI temp sensor (SPI)");
-    println!("                           sdcard@cs=<n>[?file=<path>]             SPI-mode SD card (host-file-backed)");
-    println!("                           w25q32@cs=<n>[?file=<path>]             Winbond W25Q32 NOR flash (4 MiB)");
+    println!(
+        "                           echo@cs=<n>[?seed=<n>]                  test echo device (CS-selected loopback)"
+    );
+    println!(
+        "                           tmp125@cs=<n>[?temp=<f>]                TI temp sensor (SPI)"
+    );
+    println!(
+        "                           sdcard@cs=<n>[?file=<path>]             SPI-mode SD card (host-file-backed)"
+    );
+    println!(
+        "                           w25q32@cs=<n>[?file=<path>]             Winbond W25Q32 NOR flash (4 MiB)"
+    );
     println!("  --trace <N>            Dump last N instructions on halt/timeout (default: 50)");
     println!("  --step                 Print each instruction as it executes");
     println!("  --terminal             Bridge stdin/stdout to UART (interactive mode)");
@@ -492,9 +504,7 @@ fn parse_args() -> CliArgs {
                     "Error: '{}' was removed when the in-tree assembler was split out. Use 'cor24-asm <input.s>' to produce a .lgo, then 'cor24-emu --lgo <file.lgo>'.",
                     args[i]
                 );
-                eprintln!(
-                    "  cor24-asm:  https://github.com/softwarewrighter/sw-cor24-x-assembler"
-                );
+                eprintln!("  cor24-asm:  https://github.com/softwarewrighter/sw-cor24-x-assembler");
                 std::process::exit(2);
             }
             "--speed" | "-s" => {
@@ -865,10 +875,7 @@ fn print_dump_i2c(emu: &EmulatorCore) {
     let log = emu.format_i2c_log();
     if !log.is_empty() {
         let entry_count = emu.i2c_log().entries().len();
-        println!(
-            "\n--- I2C Transaction Log ({} entries) ---",
-            entry_count
-        );
+        println!("\n--- I2C Transaction Log ({} entries) ---", entry_count);
         print!("{}", log);
     } else {
         println!("\n--- I2C Transaction Log: (no events) ---");
@@ -1721,7 +1728,6 @@ mod tests {
         assert_eq!(parse_numeric_addr(""), None);
     }
 
-
     #[test]
     fn test_p24_magic_detection() {
         let mut data = vec![0x50, 0x32, 0x34, 0x00];
@@ -1751,10 +1757,7 @@ mod tests {
     #[test]
     fn test_attach_i2c_devices_via_cli_helper() {
         let mut emu = EmulatorCore::new();
-        let specs = vec![
-            "add1@0x50".to_string(),
-            "tmp101@0x4A?temp=23.5".to_string(),
-        ];
+        let specs = vec!["add1@0x50".to_string(), "tmp101@0x4A?temp=23.5".to_string()];
         attach_i2c_devices(&mut emu, &specs);
         assert_eq!(emu.i2c().addresses.len(), 2);
     }

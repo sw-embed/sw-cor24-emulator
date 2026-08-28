@@ -84,7 +84,11 @@ enum WireState {
     #[default]
     AwaitingOpcode,
     /// Collecting 3 address bytes for opcode (0x02, 0x03, 0x20, 0xD8).
-    CollectingAddr { opcode: u8, addr: u32, bytes_done: u8 },
+    CollectingAddr {
+        opcode: u8,
+        addr: u32,
+        bytes_done: u8,
+    },
     /// Streaming data bytes from `image[cursor..]`. Wraps at IMAGE_SIZE.
     ReadingData { cursor: u32 },
     /// Repeatedly emitting the status register on every clock.
@@ -675,7 +679,10 @@ mod tests {
 
         // Drive enough byte-clocks via Read Status to drain WIP.
         let mut poll = vec![0x05u8];
-        poll.extend(std::iter::repeat_n(0xFFu8, WIP_CLOCKS_PAGE_PROGRAM as usize));
+        poll.extend(std::iter::repeat_n(
+            0xFFu8,
+            WIP_CLOCKS_PAGE_PROGRAM as usize,
+        ));
         let _ = exchange(&mut d, &poll);
         d.on_deselect();
         assert!(!d.wip(), "WIP must clear after the documented byte-clocks");
@@ -711,10 +718,8 @@ mod tests {
 
     #[test]
     fn image_persists_to_file() {
-        let path = std::env::temp_dir().join(format!(
-            "cor24-w25q32-persist-{}.bin",
-            std::process::id(),
-        ));
+        let path =
+            std::env::temp_dir().join(format!("cor24-w25q32-persist-{}.bin", std::process::id(),));
         // Write a fresh 4 MiB 0xFF image to disk first.
         fs::write(&path, vec![0xFFu8; IMAGE_SIZE]).expect("seed image");
 

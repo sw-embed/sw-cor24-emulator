@@ -94,8 +94,14 @@ fn tmp125_drives_some_clocks() {
         }
     }
 
-    assert!(saw_sclk_low, "expected SCLK to be observed low at least once");
-    assert!(saw_sclk_high, "expected SCLK to be observed high at least once");
+    assert!(
+        saw_sclk_low,
+        "expected SCLK to be observed low at least once"
+    );
+    assert!(
+        saw_sclk_high,
+        "expected SCLK to be observed high at least once"
+    );
     assert!(
         saw_seln_low,
         "expected SELN to be driven low (slave selected) at least once"
@@ -279,7 +285,10 @@ fn cli_sdcard_attach_reads_known_sector() {
     assert!(saw_token, "expected 0xFE data token within 32 wait clocks");
 
     let data: Vec<u8> = (0..512).map(|_| g.on_byte(0xFF)).collect();
-    assert_eq!(data, pattern, "CMD17 must stream the seeded sector contents");
+    assert_eq!(
+        data, pattern,
+        "CMD17 must stream the seeded sector contents"
+    );
 
     drop(g);
     let _ = fs::remove_file(&path);

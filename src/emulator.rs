@@ -501,14 +501,14 @@ impl EmulatorCore {
     pub fn attach_i2c_device<D: crate::peripherals::i2c::I2cDevice>(
         &mut self,
         dev: D,
-    ) -> Result<
-        crate::peripherals::i2c::I2cHandle<D>,
-        crate::peripherals::i2c::AddressInUse,
-    > {
+    ) -> Result<crate::peripherals::i2c::I2cHandle<D>, crate::peripherals::i2c::AddressInUse> {
         use std::sync::{Arc, Mutex};
         let typed: Arc<Mutex<D>> = Arc::new(Mutex::new(dev));
         let erased: Arc<Mutex<dyn crate::peripherals::i2c::I2cDevice>> = typed.clone();
-        let addr = typed.lock().expect("attach: device lock poisoned").address();
+        let addr = typed
+            .lock()
+            .expect("attach: device lock poisoned")
+            .address();
         self.cpu.io.i2c.addresses.insert(addr, erased)?;
         let table = self.cpu.io.i2c.addresses.shared();
         Ok(crate::peripherals::i2c::I2cHandle::new(

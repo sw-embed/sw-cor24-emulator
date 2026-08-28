@@ -247,9 +247,9 @@ impl IoState {
             master_scl: true, // both I2C lines released high at reset
             master_sda: true,
             i2c: crate::cpu::i2c_bus::I2cBusState::new(),
-            master_mosi: 0,    // idle: no byte staged
+            master_mosi: 0,     // idle: no byte staged
             master_sclk: false, // SPI mode 0 idle clock
-            master_seln: true, // active-low: 1 = no slave selected
+            master_seln: true,  // active-low: 1 = no slave selected
             spi: crate::cpu::spi_bus::SpiBusState::new(),
         }
     }
@@ -660,12 +660,16 @@ impl CpuState {
             IO_I2C_SCL => {
                 self.io.master_scl = (value & 1) != 0;
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
-                self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
+                self.io
+                    .i2c
+                    .step(self.io.master_scl, eff_sda, self.instructions);
             }
             IO_I2C_SDA => {
                 self.io.master_sda = (value & 1) != 0;
                 let eff_sda = self.io.master_sda && !self.io.i2c.slave_sda_pull;
-                self.io.i2c.step(self.io.master_scl, eff_sda, self.instructions);
+                self.io
+                    .i2c
+                    .step(self.io.master_scl, eff_sda, self.instructions);
             }
             // SPI master-line drivers. After persisting the master's
             // line state, advance the shift-register state machine —

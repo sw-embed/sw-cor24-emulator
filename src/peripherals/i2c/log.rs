@@ -17,12 +17,23 @@ pub enum I2cEvent {
     Stop,
     /// Address byte: `addr` is 7-bit; `ack` reflects the slave's
     /// response (false = NAK, no device at this address).
-    Address { addr: u8, dir: I2cDir, ack: bool },
+    Address {
+        addr: u8,
+        dir: I2cDir,
+        ack: bool,
+    },
     /// Master-to-slave data byte. `ack` is the slave's response.
-    WriteByte { addr: u8, byte: u8, ack: bool },
+    WriteByte {
+        addr: u8,
+        byte: u8,
+        ack: bool,
+    },
     /// Slave-to-master data byte. The master's ACK/NAK following
     /// the read is logged as a separate event when relevant.
-    ReadByte { addr: u8, byte: u8 },
+    ReadByte {
+        addr: u8,
+        byte: u8,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

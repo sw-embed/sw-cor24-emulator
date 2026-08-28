@@ -43,8 +43,8 @@ pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String>
                         .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
                     match k {
                         "seed" => {
-                            seed = parse_u8(v)
-                                .ok_or_else(|| format!("bad seed '{v}' in '{spec}'"))?;
+                            seed =
+                                parse_u8(v).ok_or_else(|| format!("bad seed '{v}' in '{spec}'"))?;
                         }
                         _ => return Err(format!("unknown echo param '{k}' in '{spec}'")),
                     }
@@ -61,8 +61,7 @@ pub fn build_spi_device(spec: &str) -> Result<Arc<Mutex<dyn SpiDevice>>, String>
                         .ok_or_else(|| format!("bad param '{kv}' in '{spec}'"))?;
                     match k {
                         "temp" => {
-                            let c: f32 =
-                                v.parse().map_err(|e| format!("bad temp '{v}': {e}"))?;
+                            let c: f32 = v.parse().map_err(|e| format!("bad temp '{v}': {e}"))?;
                             dev.set_temperature(c);
                         }
                         _ => return Err(format!("unknown tmp125 param '{k}' in '{spec}'")),
@@ -131,11 +130,10 @@ fn split_cs<'a>(head: &'a str, spec: &str) -> Result<(&'a str, Option<u8>), Stri
     match head.split_once('@') {
         None => Ok((head, None)),
         Some((name, rest)) => {
-            let cs_str = rest
-                .strip_prefix("cs=")
-                .ok_or_else(|| format!("bad '@' qualifier '@{rest}' in '{spec}' (expected '@cs=<n>')"))?;
-            let cs = parse_u8(cs_str)
-                .ok_or_else(|| format!("bad cs '{cs_str}' in '{spec}'"))?;
+            let cs_str = rest.strip_prefix("cs=").ok_or_else(|| {
+                format!("bad '@' qualifier '@{rest}' in '{spec}' (expected '@cs=<n>')")
+            })?;
+            let cs = parse_u8(cs_str).ok_or_else(|| format!("bad cs '{cs_str}' in '{spec}'"))?;
             Ok((name, Some(cs)))
         }
     }

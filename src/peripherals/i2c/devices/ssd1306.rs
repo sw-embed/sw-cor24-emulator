@@ -249,9 +249,7 @@ impl Ssd1306Device {
                 self.buf_idx = 0;
             }
             None => {
-                eprintln!(
-                    "ssd1306: unknown opcode 0x{byte:02X} (consuming, no effect)"
-                );
+                eprintln!("ssd1306: unknown opcode 0x{byte:02X} (consuming, no effect)");
             }
         }
     }
@@ -299,19 +297,19 @@ fn command_param_count(opcode: u8) -> Option<u8> {
         0x00..=0x0F => Some(0),
         0x10..=0x1F => Some(0),
         // Lenient-consume
-        0x81 => Some(1),       // contrast
+        0x81 => Some(1),        // contrast
         0x40..=0x7F => Some(0), // set display start line (0x40 | line)
         0xA0 | 0xA1 => Some(0), // segment remap
         0xA4 | 0xA5 => Some(0), // entire display on / resume
         0xA6 | 0xA7 => Some(0), // normal / inverse
-        0xA8 => Some(1),       // multiplex ratio
+        0xA8 => Some(1),        // multiplex ratio
         0xC0 | 0xC8 => Some(0), // COM scan direction
-        0xD3 => Some(1),       // display offset
-        0xD5 => Some(1),       // clock divide
-        0xD9 => Some(1),       // precharge
-        0xDA => Some(1),       // COM pins config
-        0xDB => Some(1),       // vcomh deselect
-        0x8D => Some(1),       // charge pump
+        0xD3 => Some(1),        // display offset
+        0xD5 => Some(1),        // clock divide
+        0xD9 => Some(1),        // precharge
+        0xDA => Some(1),        // COM pins config
+        0xDB => Some(1),        // vcomh deselect
+        0x8D => Some(1),        // charge pump
         _ => None,
     }
 }

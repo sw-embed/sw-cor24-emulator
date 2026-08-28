@@ -190,7 +190,12 @@ impl SdCardDevice {
                 self.rx_buf[rx_n as usize] = mosi;
                 if rx_n == 5 {
                     let opcode = self.rx_buf[0];
-                    let arg = [self.rx_buf[1], self.rx_buf[2], self.rx_buf[3], self.rx_buf[4]];
+                    let arg = [
+                        self.rx_buf[1],
+                        self.rx_buf[2],
+                        self.rx_buf[3],
+                        self.rx_buf[4],
+                    ];
                     self.state = WireState::AwaitingCommand;
                     self.handle_command(opcode, arg);
                 } else {
@@ -522,7 +527,9 @@ mod tests {
 
         let mut d = SdCardDevice::from_file(&path, DEFAULT_CS).expect("load");
 
-        let pattern: Vec<u8> = (0..BLOCK_SIZE).map(|i| (i.wrapping_mul(7) & 0xFF) as u8).collect();
+        let pattern: Vec<u8> = (0..BLOCK_SIZE)
+            .map(|i| (i.wrapping_mul(7) & 0xFF) as u8)
+            .collect();
         assert_eq!(send_cmd(&mut d, 24, 3), 0x00);
         let _ = d.on_byte(0xFE);
         for &b in &pattern {

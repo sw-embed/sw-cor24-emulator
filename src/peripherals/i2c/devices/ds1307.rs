@@ -288,7 +288,15 @@ fn decompose_unix_seconds(secs: u64) -> (u8, u8, u8, u8, u8, u8, u8) {
 
     let (year, month, date) = days_to_ymd(days);
     let year_2digit = (year - 2000).rem_euclid(100) as u8;
-    (year_2digit, month as u8, date as u8, dow, hour, minute, second)
+    (
+        year_2digit,
+        month as u8,
+        date as u8,
+        dow,
+        hour,
+        minute,
+        second,
+    )
 }
 
 fn days_to_ymd(mut days: u64) -> (i32, u32, u32) {

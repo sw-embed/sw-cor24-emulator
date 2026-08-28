@@ -223,13 +223,21 @@ impl I2cBusState {
                         let addr = new_bits >> 1;
                         let dir = self.current_dir;
                         self.log.push(
-                            I2cEvent::Address { addr, dir, ack: acked },
+                            I2cEvent::Address {
+                                addr,
+                                dir,
+                                ack: acked,
+                            },
                             instruction,
                         );
                     } else {
                         let addr = self.current_target.unwrap_or(0);
                         self.log.push(
-                            I2cEvent::WriteByte { addr, byte: new_bits, ack: acked },
+                            I2cEvent::WriteByte {
+                                addr,
+                                byte: new_bits,
+                                ack: acked,
+                            },
                             instruction,
                         );
                     }
@@ -262,7 +270,10 @@ impl I2cBusState {
                     self.phase = I2cPhase::AckSlaveToMaster;
                     let addr = self.current_target.unwrap_or(0);
                     self.log.push(
-                        I2cEvent::ReadByte { addr, byte: new_bits },
+                        I2cEvent::ReadByte {
+                            addr,
+                            byte: new_bits,
+                        },
                         instruction,
                     );
                 } else {
@@ -729,4 +740,3 @@ mod tests {
         assert_eq!(cpu.io.i2c.current_dir, I2cDir::Write);
     }
 }
-

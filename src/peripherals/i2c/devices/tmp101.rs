@@ -395,4 +395,3 @@ mod tests {
         assert_eq!(d.config() & !0x60, 0x05); // other bits preserved
     }
 }
-

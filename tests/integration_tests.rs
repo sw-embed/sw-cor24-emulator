@@ -54,20 +54,59 @@ fn load_lgo_into_cpu(lgo: &str) -> CpuState {
 const EXAMPLES: &[(&str, &str)] = &[
     ("Add", include_str!("../src/examples/assembler/add.s")),
     ("Assert", include_str!("../src/examples/assembler/assert.s")),
-    ("Blink LED", include_str!("../src/examples/assembler/blink_led.s")),
-    ("Button Echo", include_str!("../src/examples/assembler/button_echo.s")),
-    ("Comments", include_str!("../src/examples/assembler/comments.s")),
-    ("Countdown", include_str!("../src/examples/assembler/countdown.s")),
+    (
+        "Blink LED",
+        include_str!("../src/examples/assembler/blink_led.s"),
+    ),
+    (
+        "Button Echo",
+        include_str!("../src/examples/assembler/button_echo.s"),
+    ),
+    (
+        "Comments",
+        include_str!("../src/examples/assembler/comments.s"),
+    ),
+    (
+        "Countdown",
+        include_str!("../src/examples/assembler/countdown.s"),
+    ),
     ("Echo", include_str!("../src/examples/assembler/echo.s")),
-    ("Fibonacci", include_str!("../src/examples/assembler/fibonacci.s")),
-    ("Literals", include_str!("../src/examples/assembler/literals.s")),
-    ("Loop Trace", include_str!("../src/examples/assembler/loop_trace.s")),
-    ("Memory Access", include_str!("../src/examples/assembler/memory_access.s")),
-    ("Multiply", include_str!("../src/examples/assembler/multiply.s")),
-    ("Nested Calls", include_str!("../src/examples/assembler/nested_calls.s")),
-    ("Stack Variables", include_str!("../src/examples/assembler/stack_variables.s")),
-    ("UART Hello", include_str!("../src/examples/assembler/uart_hello.s")),
-    ("Variables", include_str!("../src/examples/assembler/variables.s")),
+    (
+        "Fibonacci",
+        include_str!("../src/examples/assembler/fibonacci.s"),
+    ),
+    (
+        "Literals",
+        include_str!("../src/examples/assembler/literals.s"),
+    ),
+    (
+        "Loop Trace",
+        include_str!("../src/examples/assembler/loop_trace.s"),
+    ),
+    (
+        "Memory Access",
+        include_str!("../src/examples/assembler/memory_access.s"),
+    ),
+    (
+        "Multiply",
+        include_str!("../src/examples/assembler/multiply.s"),
+    ),
+    (
+        "Nested Calls",
+        include_str!("../src/examples/assembler/nested_calls.s"),
+    ),
+    (
+        "Stack Variables",
+        include_str!("../src/examples/assembler/stack_variables.s"),
+    ),
+    (
+        "UART Hello",
+        include_str!("../src/examples/assembler/uart_hello.s"),
+    ),
+    (
+        "Variables",
+        include_str!("../src/examples/assembler/variables.s"),
+    ),
 ];
 
 /// Load an LGO file, set PC, run for max_cycles

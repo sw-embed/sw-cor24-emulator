@@ -111,7 +111,10 @@ fn add1_write_then_read_increments_through_bus() {
     bus_stop(&mut emu);
 
     bus_start(&mut emu);
-    assert!(bus_write_byte(&mut emu, (0x50 << 1) | 1), "addr read should ACK");
+    assert!(
+        bus_write_byte(&mut emu, (0x50 << 1) | 1),
+        "addr read should ACK"
+    );
     let r1 = bus_read_byte(&mut emu, true); // master ACKs to keep going
     let r2 = bus_read_byte(&mut emu, false); // master NAKs to end
     bus_stop(&mut emu);
@@ -275,7 +278,10 @@ fn ds1307_cli_spec_seeds_registers_visible_through_bus() {
         .expect("device must be addressable at 0x68");
     let mut g = dev_via_bus.lock().unwrap();
     g.on_start();
-    assert_eq!(g.on_write_byte(0x02), cor24_emulator::peripherals::i2c::Ack::Ack);
+    assert_eq!(
+        g.on_write_byte(0x02),
+        cor24_emulator::peripherals::i2c::Ack::Ack
+    );
     g.on_start();
     // Reading at pointer 0x02 returns the Hours register first.
     assert_eq!(g.on_read_byte(), 0x12);
