@@ -118,6 +118,8 @@ cor24-emu --load-binary pvm.bin@0 --load-binary hello.p24@0x010000 \
 # Set button S2 state for testing
 cor24-asm button_test.s -o /tmp/button_test.lgo
 cor24-emu --lgo /tmp/button_test.lgo --switch on --dump
+# toggle S2 mid-run (and log LED changes at --speed 0):
+cor24-emu --lgo /tmp/button_test.lgo --switch-at 1000:on,3000:off --speed 0 -n 5000
 ```
 
 ## Building

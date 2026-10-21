@@ -1,5 +1,24 @@
 # Changes
 
+## 2026-10-20
+
+- **`--switch-at <N>:<on|off>[,...]`** — schedule S2 (button) changes at
+  exact instruction counts during a run; repeatable. The run batch is
+  split at each event so the change lands where asked, and each one is
+  logged as `[S2 @ N] pressed|released` (stdout, or stderr under
+  `--quiet`).
+- **LED change log at `--speed 0`** — every LED register change prints
+  `[LED @ N] 0x.. (D2 on|off)` instead of redrawing the interactive LED
+  bar (which is kept for throttled speeds). Together with `--switch-at`
+  this lets golden-output suites assert that firmware *tracks* the switch
+  over time — `--switch` alone could not catch a loop that halts mid-run
+  with the LED already right (sw-cor24-forth's `13-loop-switch-led.fth`
+  stack leak).
+- Tests: `cli/tests/switch_at.rs` (process-level, needs `cor24-asm` on
+  PATH like the other CLI tests) plus parser unit tests in `cli/src/run.rs`.
+- `run_with_timing` now takes a `Stimuli { uart_input, switch_events }`
+  instead of a bare UART slice.
+
 ## 2026-04-15
 
 - **Quiet UART output** — `--quiet` / `-q` writes UART TX as raw bytes to stdout,

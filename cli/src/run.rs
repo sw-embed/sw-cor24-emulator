@@ -102,6 +102,9 @@ fn print_short_help() {
     println!("  --stack-kilobytes <3|8>  EBR stack size (default: 3, max: 8)");
     println!("  --stack-bounds <B>:<T>|none  Valid SP range for the overflow check; none disables");
     println!("  --switch <on|off>      Set button S2 state (default: off/released)");
+    println!("  --switch-at <N>:<on|off>[,...]  Change S2 after instruction N (repeatable);");
+    println!("                           logged as [S2 @ N] pressed|released. With --speed 0, LED");
+    println!("                           changes are logged as [LED @ N] lines for test harnesses");
     println!("  --uart-never-ready     UART TX stays busy forever (test polling)");
     println!(
         "  --guard-jumps          Halt if PC leaves the code region (catches bad control flow)"
@@ -268,6 +271,38 @@ impl GuardState {
     }
 }
 
+/// Scripted external stimuli for a run: bytes typed at the UART and
+/// scheduled S2 (button) changes.
+struct Stimuli<'a> {
+    uart_input: &'a [u8],
+    /// (instruction count, pressed), sorted by count.
+    switch_events: &'a [(u64, bool)],
+}
+
+/// Parse `--switch-at` values: `<N>:<on|off>` entries separated by commas.
+fn parse_switch_events(spec: &str) -> Result<Vec<(u64, bool)>, String> {
+    let mut events = Vec::new();
+    for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let (at, state) = item
+            .split_once(':')
+            .ok_or_else(|| format!("expected <N>:<on|off>, got '{}'", item))?;
+        let at: u64 = at
+            .trim()
+            .parse()
+            .map_err(|_| format!("bad instruction count '{}'", at))?;
+        let pressed = match state.trim().to_lowercase().as_str() {
+            "on" | "pressed" | "1" => true,
+            "off" | "released" | "0" => false,
+            other => return Err(format!("state must be on or off, got '{}'", other)),
+        };
+        events.push((at, pressed));
+    }
+    if events.is_empty() {
+        return Err("no events given".into());
+    }
+    Ok(events)
+}
+
 /// Run emulator with timing, instruction limit, and queued UART input.
 /// UART input bytes are fed one at a time after each batch, simulating
 /// character-by-character typing at the emulated UART RX register.
@@ -276,10 +311,14 @@ fn run_with_timing(
     speed: u64,
     time_limit: f64,
     max_instructions: i64,
-    uart_input: &[u8],
+    stimuli: &Stimuli,
     quiet: bool,
     guard: &GuardState,
 ) -> u64 {
+    let Stimuli {
+        uart_input,
+        switch_events,
+    } = *stimuli;
     let start = Instant::now();
     let time_limit_duration = Duration::from_secs_f64(time_limit);
 
@@ -307,6 +346,7 @@ fn run_with_timing(
     let mut prev_led = emu.get_led();
     let mut prev_uart_len = 0usize;
     let mut uart_input_pos = 0usize;
+    let mut next_event = 0usize;
 
     emu.resume();
 
@@ -319,23 +359,60 @@ fn run_with_timing(
             break;
         }
 
-        let this_batch = if max_instructions >= 0 {
+        let mut this_batch = if max_instructions >= 0 {
             let remaining = (max_instructions as u64).saturating_sub(total_instructions);
             batch_size.min(remaining).max(1)
         } else {
             batch_size
         };
+        // Stop the batch exactly at the next scheduled S2 change so the
+        // toggle lands at a deterministic instruction count.
+        if let Some(&(at, _)) = switch_events.get(next_event)
+            && at > total_instructions
+        {
+            this_batch = this_batch.min(at - total_instructions);
+        }
 
         let result = emu.run_batch(this_batch);
         total_instructions += result.instructions_run;
 
-        // Check for LED changes
+        // Check for LED changes. At max speed the change is logged as a
+        // line (greppable by test harnesses); at a throttled speed the
+        // interactive LED bar is redrawn instead.
         let led = emu.get_led();
         if led != prev_led {
             if !quiet {
-                print_leds(led);
+                if speed == 0 {
+                    println!(
+                        "[LED @ {}] 0x{:02X} (D2 {})",
+                        total_instructions,
+                        led,
+                        if led & 1 == 0 { "on" } else { "off" }
+                    );
+                } else {
+                    print_leds(led);
+                }
             }
             prev_led = led;
+        }
+
+        // Apply scheduled S2 changes that are now due.
+        while let Some(&(at, pressed)) = switch_events.get(next_event) {
+            if at > total_instructions {
+                break;
+            }
+            emu.set_button_pressed(pressed);
+            let msg = format!(
+                "[S2 @ {}] {}",
+                total_instructions,
+                if pressed { "pressed" } else { "released" }
+            );
+            if quiet {
+                eprintln!("{}", msg);
+            } else {
+                println!("{}", msg);
+            }
+            next_event += 1;
         }
 
         // Print any new UART output
@@ -439,6 +516,8 @@ struct CliArgs {
     load_binaries: Vec<(String, u32)>,
     patches: Vec<(u32, u32)>,
     switch_pressed: bool,
+    /// Scheduled S2 changes: (instruction count, pressed), sorted by count.
+    switch_events: Vec<(u64, bool)>,
     quiet: bool,
     guard_jumps: bool,
     code_end: Option<u32>,
@@ -488,6 +567,7 @@ fn parse_args() -> CliArgs {
         load_binaries: Vec::new(),
         patches: Vec::new(),
         switch_pressed: false,
+        switch_events: Vec::new(),
         quiet: false,
         guard_jumps: false,
         code_end: None,
@@ -698,6 +778,19 @@ fn parse_args() -> CliArgs {
                             std::process::exit(1);
                         }
                     }
+                    i += 1;
+                }
+            }
+            "--switch-at" => {
+                if i + 1 < args.len() {
+                    match parse_switch_events(&args[i + 1]) {
+                        Ok(mut evs) => cli.switch_events.append(&mut evs),
+                        Err(msg) => {
+                            eprintln!("Error: --switch-at {}", msg);
+                            std::process::exit(1);
+                        }
+                    }
+                    cli.switch_events.sort_by_key(|e| e.0);
                     i += 1;
                 }
             }
@@ -1479,7 +1572,10 @@ fn main() {
                 cli.speed,
                 cli.time_limit,
                 cli.max_instructions,
-                &cli.uart_input,
+                &Stimuli {
+                    uart_input: &cli.uart_input,
+                    switch_events: &cli.switch_events,
+                },
                 cli.quiet,
                 &guard,
             );
@@ -1567,7 +1663,10 @@ fn main() {
                 cli.speed,
                 cli.time_limit,
                 cli.max_instructions,
-                &cli.uart_input,
+                &Stimuli {
+                    uart_input: &cli.uart_input,
+                    switch_events: &cli.switch_events,
+                },
                 cli.quiet,
                 &guard,
             );
@@ -1701,7 +1800,10 @@ fn main() {
                     cli.speed,
                     cli.time_limit,
                     cli.max_instructions,
-                    &cli.uart_input,
+                    &Stimuli {
+                        uart_input: &cli.uart_input,
+                        switch_events: &cli.switch_events,
+                    },
                     cli.quiet,
                     &guard,
                 );
@@ -1742,6 +1844,21 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switch_events_parse_list_and_states() {
+        assert_eq!(
+            parse_switch_events("100:on, 300:off,500:pressed,700:0").unwrap(),
+            vec![(100, true), (300, false), (500, true), (700, false)]
+        );
+    }
+
+    #[test]
+    fn switch_events_reject_bad_input() {
+        for bad in ["", "100", "x:on", "100:maybe", ":on"] {
+            assert!(parse_switch_events(bad).is_err(), "{bad:?} should fail");
+        }
+    }
 
     #[test]
     fn test_parse_hex_prefix() {

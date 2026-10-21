@@ -60,12 +60,25 @@ Runs `blinky_s2.lgo` (the 3-line MakerLisp program, see
 - once with S2 released (default) — expect `LED D2: 0x01 off`;
 - once with `--switch on` — expect `LED D2: 0x00 ON (active-low)`.
 
-Because `cor24-emu --switch` takes a single value at start-up, an actual
-*toggle-during-run* test lives in the integration suite. The demo prints
-the command to invoke it:
+`--switch` fixes S2 for the whole run. To toggle it *during* a run from
+the command line, schedule changes by instruction count with
+`--switch-at`; at `--speed 0` every LED change is logged too, so a
+golden-output test can assert that firmware tracks the switch over time:
+
+```bash
+cor24-emu --lgo blinky_s2.lgo --switch-at 1000:on,3000:off --speed 0 -n 5000
+# [S2 @ 1000] pressed
+# [LED @ 1010] 0x00 (D2 on)
+# [S2 @ 3000] released
+# [LED @ 3010] 0x01 (D2 off)
+```
+
+The batch is split at each scheduled count, so events land exactly
+where asked. The in-process equivalent lives in the integration suite:
 
 ```bash
 cargo test --test integration_tests test_blinky_s2_led_follows_switch
+cargo test -p cor24-cli --test switch_at
 ```
 
 ## sieve
